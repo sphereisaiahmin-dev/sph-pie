@@ -136,12 +136,16 @@ body.menu-open .app-main{transform:translateX(calc(min(var(--drawer-width), 92vw
 }
 .topbar-toolbar{
   display:grid;
-  grid-template-columns:auto 1fr auto;
-  grid-template-areas:"actions title logo";
+  grid-template-columns:auto auto 1fr auto;
+  grid-template-areas:"menu actions title logo";
   align-items:center;
   gap:16px;
   min-height:60px;
   width:100%;
+}
+.topbar-toolbar #configBtn{
+  grid-area:menu;
+  justify-self:start;
 }
 .topbar-actions{
   grid-area:actions;
@@ -182,14 +186,17 @@ body.view-pilot .topbar-actions{
   .topbar-toolbar{
     grid-template-columns:auto 1fr;
     grid-template-areas:
-      "actions logo"
+      "menu logo"
+      "actions actions"
       "title title";
     gap:10px;
     min-height:0;
   }
+  .topbar-toolbar #configBtn{justify-self:start;}
   .topbar-actions{
     width:100%;
     gap:8px;
+    justify-self:stretch;
   }
   .topbar-title{
     justify-self:stretch;

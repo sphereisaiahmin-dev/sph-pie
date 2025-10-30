@@ -611,11 +611,6 @@ input:disabled, select:disabled, textarea:disabled{opacity:.55; cursor:not-allow
   background-clip: padding-box;
 }
 textarea{min-height:84px; resize:vertical}
-.textarea-autosize{
-  resize:none;
-  overflow:hidden;
-  min-height:120px;
-}
 select[multiple]{
   min-height:160px;
 }

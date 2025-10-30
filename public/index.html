@@ -8,10 +8,9 @@
 </head>
 <body>
   <div id="appShell" class="app-shell">
-    <aside id="configPanel" class="config" role="dialog" aria-modal="true" aria-labelledby="configTitle">
+    <aside id="configPanel" class="config" role="dialog" aria-modal="true" aria-labelledby="configTitle" aria-hidden="true">
       <div class="toolbar config-header">
         <h2 id="configTitle">Workspace menu</h2>
-        <button id="closeConfig" class="btn icon-btn" title="Close settings">✖️</button>
       </div>
       <nav class="config-nav" aria-label="Settings categories">
         <button type="button" class="config-nav-btn is-active" data-config-target="lead">Lead settings</button>
@@ -81,13 +80,13 @@
     <div id="appMain" class="app-main">
       <div class="topbar" role="banner">
         <div class="topbar-toolbar">
-          <button id="configBtn" class="btn icon-btn hamburger-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="configPanel" title="Open settings">
+          <button id="configBtn" class="btn icon-btn hamburger-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="configPanel" title="Toggle settings">
             <span class="hamburger-icon" aria-hidden="true">
               <span></span>
               <span></span>
               <span></span>
             </span>
-            <span class="sr-only">Open settings</span>
+            <span class="sr-only">Toggle settings</span>
           </button>
           <div class="topbar-actions">
             <button id="roleHome" class="btn ghost" type="button">← Choose workspace</button>
@@ -322,7 +321,7 @@
         </div>
         <div class="col-9">
           <label for="entryNotes">Notes</label>
-          <input id="entryNotes" type="text" placeholder="Short note" />
+          <textarea id="entryNotes" class="textarea-autosize" rows="3" placeholder="Short note"></textarea>
         </div>
         <div class="col-12 entry-actions">
           <button id="addLine" class="btn primary">Add line</button>

@@ -202,7 +202,6 @@ const editModal = el('editModal');
 const editForm = el('editForm');
 const configBtn = el('configBtn');
 const configPanel = el('configPanel');
-const closeConfigBtn = el('closeConfig');
 const cancelConfigBtn = el('cancelConfig');
 const configForm = el('configForm');
 const configMessage = el('configMessage');
@@ -374,8 +373,7 @@ function initUI(){
   el('closeEdit').addEventListener('click', closeEditModal);
   el('saveEdit').addEventListener('click', saveEditEntry);
 
-  configBtn.addEventListener('click', ()=> toggleConfig(true));
-  closeConfigBtn.addEventListener('click', ()=> toggleConfig(false));
+  configBtn.addEventListener('click', ()=> toggleConfig());
   cancelConfigBtn.addEventListener('click', ()=> toggleConfig(false));
   if(configNavButtons.length){
     configNavButtons.forEach(btn=>{
@@ -416,8 +414,11 @@ function initUI(){
     }
   });
 
+  enableAutoResize(entryNotes);
+  window.addEventListener('resize', refreshDrawerOffset);
   configForm.addEventListener('submit', onConfigSubmit);
   setConfigSection('lead');
+  refreshDrawerOffset();
   closeAdminPinPrompt();
   if(webhookEnabled){
     webhookEnabled.addEventListener('change', ()=>{
@@ -2944,6 +2945,7 @@ function clearEntryForm(){
   delaySec.value = '';
   commandRx.value = '';
   entryNotes.value = '';
+  resizeTextarea(entryNotes);
   updateIssueVisibility();
 }
 
@@ -3197,6 +3199,7 @@ function openEditModal(showId, entryId){
   editForm.innerHTML = '';
   const fields = buildEntryFieldsClone(entry, show);
   fields.forEach(f=> editForm.appendChild(f));
+  enableAutoResize(qs('#edit_entryNotes', editForm));
   editModal.classList.add('open');
 }
 
@@ -3280,7 +3283,11 @@ function buildEntryFieldsClone(entry, show){
     wrapper.appendChild(label);
     node.id = id;
     node.style.width = '100%';
-    node.style.minHeight = 'var(--tap-min)';
+    if(node.tagName === 'TEXTAREA'){
+      node.classList.add('textarea-autosize');
+    }else{
+      node.style.minHeight = 'var(--tap-min)';
+    }
     wrapper.appendChild(node);
     return wrapper;
   };
@@ -3366,9 +3373,10 @@ function buildEntryFieldsClone(entry, show){
   cmdRx.innerHTML = '<option value="">Select</option>' + ['Yes','No'].map(opt=>`<option ${entry.commandRx===opt?'selected':''}>${opt}</option>`).join('');
   fields.push(wrap(createLabelWrap('edit_commandRx', 'Command received', cmdRx)));
 
-  const notes = document.createElement('input');
-  notes.type = 'text';
+  const notes = document.createElement('textarea');
   notes.value = entry.notes || '';
+  notes.rows = 3;
+  notes.classList.add('textarea-autosize');
   fields.push(wrap(createLabelWrap('edit_entryNotes', 'Notes', notes), 'col-9'));
 
   return fields;
@@ -3468,21 +3476,75 @@ function setView(view){
   }
 }
 
-function toggleConfig(open){
-  configBtn.setAttribute('aria-expanded', String(open));
-  configBtn.classList.toggle('is-active', open);
-  configPanel.classList.toggle('open', open);
-  if(configPanel){
-    configPanel.setAttribute('aria-hidden', open ? 'false' : 'true');
+function toggleConfig(force){
+  const shouldOpen = typeof force === 'boolean'
+    ? force
+    : !document.body.classList.contains('menu-open');
+  if(configBtn){
+    configBtn.setAttribute('aria-expanded', String(shouldOpen));
+    configBtn.classList.toggle('is-active', shouldOpen);
   }
-  document.body.classList.toggle('menu-open', open);
-  if(open){
+  if(configPanel){
+    configPanel.classList.toggle('open', shouldOpen);
+    configPanel.setAttribute('aria-hidden', shouldOpen ? 'false' : 'true');
+  }
+  document.body.classList.toggle('menu-open', shouldOpen);
+  if(!shouldOpen){
+    document.body.style.setProperty('--drawer-active-width', '0px');
+  }
+  requestAnimationFrame(refreshDrawerOffset);
+  if(shouldOpen){
     configMessage.textContent = '';
   }else{
     adminUnlocked = false;
     closeAdminPinPrompt();
     setConfigSection('lead');
   }
+}
+
+function refreshDrawerOffset(){
+  if(!configPanel){
+    document.body.style.setProperty('--drawer-active-width', '0px');
+    return;
+  }
+  const isOpen = document.body.classList.contains('menu-open') && configPanel.classList.contains('open');
+  const measured = isOpen ? configPanel.getBoundingClientRect().width : 0;
+  const clamped = Math.max(0, Math.min(measured, window.innerWidth));
+  document.body.style.setProperty('--drawer-active-width', `${Math.round(clamped)}px`);
+}
+
+function resizeTextarea(textarea){
+  if(!textarea || typeof window === 'undefined'){
+    return;
+  }
+  const computed = window.getComputedStyle(textarea);
+  const minHeight = Number(textarea.dataset.minHeight) || parseFloat(computed.minHeight) || 0;
+  textarea.style.height = 'auto';
+  const next = Math.max(minHeight, textarea.scrollHeight);
+  textarea.style.height = `${next}px`;
+}
+
+function enableAutoResize(textarea){
+  if(!textarea){
+    return;
+  }
+  if(!textarea.classList.contains('textarea-autosize')){
+    textarea.classList.add('textarea-autosize');
+  }
+  if(!textarea.dataset.minHeight){
+    const computed = typeof window !== 'undefined' ? window.getComputedStyle(textarea) : null;
+    const minHeight = textarea.clientHeight || (computed ? parseFloat(computed.minHeight) : 0) || 0;
+    textarea.dataset.minHeight = String(minHeight);
+  }
+  if(textarea.dataset.autosizeAttached === 'true'){
+    resizeTextarea(textarea);
+    return;
+  }
+  textarea.dataset.autosizeAttached = 'true';
+  const handler = ()=> resizeTextarea(textarea);
+  textarea.addEventListener('input', handler);
+  textarea.addEventListener('change', handler);
+  handler();
 }
 
 function setConfigSection(section){

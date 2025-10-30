@@ -414,7 +414,6 @@ function initUI(){
     }
   });
 
-  enableAutoResize(entryNotes);
   window.addEventListener('resize', refreshDrawerOffset);
   configForm.addEventListener('submit', onConfigSubmit);
   setConfigSection('lead');
@@ -2945,7 +2944,6 @@ function clearEntryForm(){
   delaySec.value = '';
   commandRx.value = '';
   entryNotes.value = '';
-  resizeTextarea(entryNotes);
   updateIssueVisibility();
 }
 
@@ -3199,7 +3197,6 @@ function openEditModal(showId, entryId){
   editForm.innerHTML = '';
   const fields = buildEntryFieldsClone(entry, show);
   fields.forEach(f=> editForm.appendChild(f));
-  enableAutoResize(qs('#edit_entryNotes', editForm));
   editModal.classList.add('open');
 }
 
@@ -3283,9 +3280,7 @@ function buildEntryFieldsClone(entry, show){
     wrapper.appendChild(label);
     node.id = id;
     node.style.width = '100%';
-    if(node.tagName === 'TEXTAREA'){
-      node.classList.add('textarea-autosize');
-    }else{
+    if(node.tagName !== 'TEXTAREA'){
       node.style.minHeight = 'var(--tap-min)';
     }
     wrapper.appendChild(node);
@@ -3375,9 +3370,7 @@ function buildEntryFieldsClone(entry, show){
 
   const notes = document.createElement('textarea');
   notes.value = entry.notes || '';
-  notes.rows = 3;
-  notes.classList.add('textarea-autosize');
-  fields.push(wrap(createLabelWrap('edit_entryNotes', 'Notes', notes), 'col-9'));
+  fields.push(wrap(createLabelWrap('edit_entryNotes', 'Notes', notes), 'col-12'));
 
   return fields;
 }
@@ -3511,40 +3504,6 @@ function refreshDrawerOffset(){
   const measured = isOpen ? configPanel.getBoundingClientRect().width : 0;
   const clamped = Math.max(0, Math.min(measured, window.innerWidth));
   document.body.style.setProperty('--drawer-active-width', `${Math.round(clamped)}px`);
-}
-
-function resizeTextarea(textarea){
-  if(!textarea || typeof window === 'undefined'){
-    return;
-  }
-  const computed = window.getComputedStyle(textarea);
-  const minHeight = Number(textarea.dataset.minHeight) || parseFloat(computed.minHeight) || 0;
-  textarea.style.height = 'auto';
-  const next = Math.max(minHeight, textarea.scrollHeight);
-  textarea.style.height = `${next}px`;
-}
-
-function enableAutoResize(textarea){
-  if(!textarea){
-    return;
-  }
-  if(!textarea.classList.contains('textarea-autosize')){
-    textarea.classList.add('textarea-autosize');
-  }
-  if(!textarea.dataset.minHeight){
-    const computed = typeof window !== 'undefined' ? window.getComputedStyle(textarea) : null;
-    const minHeight = textarea.clientHeight || (computed ? parseFloat(computed.minHeight) : 0) || 0;
-    textarea.dataset.minHeight = String(minHeight);
-  }
-  if(textarea.dataset.autosizeAttached === 'true'){
-    resizeTextarea(textarea);
-    return;
-  }
-  textarea.dataset.autosizeAttached = 'true';
-  const handler = ()=> resizeTextarea(textarea);
-  textarea.addEventListener('input', handler);
-  textarea.addEventListener('change', handler);
-  handler();
 }
 
 function setConfigSection(section){

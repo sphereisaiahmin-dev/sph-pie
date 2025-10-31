@@ -4117,11 +4117,26 @@ function updateWebhookPreview(){
   const messageJson = JSON.stringify(message, null, 2);
   const headerCells = EXPORT_COLUMNS.map(column=>`<th>${escapeHtml(column)}</th>`).join('');
   const rowCells = EXPORT_COLUMNS.map(column=>`<td>${escapeHtml(row[column] ?? '')}</td>`).join('');
+  const secret = webhookSecret ? webhookSecret.value.trim() : '';
+  const additionalHeaders = parseHeadersText(webhookHeaders ? webhookHeaders.value : '');
+  const hasCustomAuthorization = additionalHeaders.some(header => header && header.name && header.name.toLowerCase() === 'authorization');
+  const combinedHeaders = [
+    {name: 'Content-Type', value: 'application/json'},
+    ...(!hasCustomAuthorization && secret ? [{name: 'Authorization', value: `Bearer ${secret}`}]: []),
+    ...additionalHeaders
+  ];
+  const headersListHtml = combinedHeaders.length
+    ? combinedHeaders.map(({name, value}) => `<li><code>${escapeHtml(name)}: ${escapeHtml(value)}</code></li>`).join('')
+    : '<li class="webhook-headers-empty">No headers configured</li>';
   const statusMessage = !enabled
     ? 'Webhook disabled. Enable the toggle to deliver entries automatically.'
     : (url ? `Entries will ${escapeHtml(method)} to ${escapeHtml(url)}.` : 'Provide a webhook URL to activate delivery.');
   webhookPreview.innerHTML = `
     <div class="webhook-status ${enabled && url ? 'is-on' : 'is-off'}">${statusMessage}</div>
+    <div class="webhook-headers">
+      <div class="webhook-json-label">HTTP headers</div>
+      <ul class="webhook-headers-list">${headersListHtml}</ul>
+    </div>
     <div class="webhook-table-wrap">
       <table class="webhook-table">
         <thead><tr>${headerCells}</tr></thead>

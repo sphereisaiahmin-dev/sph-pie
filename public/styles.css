@@ -1008,6 +1008,11 @@ summary::-webkit-details-marker{display:none}
 .webhook-status.is-on{color:#bff7dc}
 .webhook-status.is-on::before{background:var(--success); box-shadow:0 0 0 6px rgba(31,198,122,.18)}
 .webhook-status.is-off::before{background:var(--warn)}
+.webhook-headers{display:flex; flex-direction:column; gap:6px}
+.webhook-headers-list{margin:0; padding-left:0; list-style:none; display:flex; flex-direction:column; gap:4px}
+.webhook-headers-list li{font-size:12px; color:var(--text)}
+.webhook-headers-list code{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; background:rgba(15,18,24,.92); border:1px solid rgba(255,255,255,.06); border-radius:8px; padding:4px 6px; display:inline-block}
+.webhook-headers-empty{color:var(--text-dim); font-style:italic; padding:2px 0}
 .webhook-table-wrap{overflow:auto; border-radius:10px; border:1px solid rgba(255,255,255,.08)}
 .webhook-table{width:100%; min-width:720px; border-collapse:separate; border-spacing:0; font-size:13px}
 .webhook-table th,.webhook-table td{padding:8px 10px; border-bottom:1px solid rgba(255,255,255,.06); border-right:1px solid rgba(255,255,255,.04)}

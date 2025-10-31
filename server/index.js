@@ -18,7 +18,7 @@ async function bootstrap(){
   let boundHost = envHost || configuredHost;
   let serverInstance = null;
   await initProvider(config);
-  setWebhookConfig(config.webhook);
+  await setWebhookConfig(config.webhook);
 
   app.use(express.json({limit: '2mb'}));
   app.use(morgan('dev'));
@@ -65,13 +65,13 @@ async function bootstrap(){
 
   app.get('/api/config', (req, res)=>{
     const storageMeta = getStorageMetadata();
-    res.json({...config, storageMeta});
+    res.json({...config, storageMeta, webhookStatus: getWebhookStatus()});
   });
 
   app.put('/api/config', asyncHandler(async (req, res)=>{
     const nextConfig = saveConfig(req.body || {});
     await initProvider(nextConfig);
-    setWebhookConfig(nextConfig.webhook);
+    await setWebhookConfig(nextConfig.webhook);
     config = nextConfig;
     configuredHost = config.host || configuredHost;
     configuredPort = config.port || configuredPort;
@@ -82,7 +82,7 @@ async function bootstrap(){
       console.warn(`Configured port updated to ${configuredPort}. Restart the server to bind to the new port.`);
     }
     const storageMeta = getStorageMetadata();
-    res.json({...config, storageMeta});
+    res.json({...config, storageMeta, webhookStatus: getWebhookStatus()});
   }));
 
   app.get('/api/staff', asyncHandler(async (req, res)=>{
@@ -239,7 +239,7 @@ async function bootstrap(){
       }
     }
 
-    res.json({requested, dispatched, skipped, errors});
+    res.json({requested, dispatched, skipped, errors, webhook: getWebhookStatus()});
   }));
 
   app.post('/api/shows/:id/entries', asyncHandler(async (req, res)=>{

@@ -101,6 +101,14 @@ function buildTableRow(show = {}, entry = {}){
   };
 }
 
+function buildMessagePayload(rowObject = {}){
+  return EXPORT_COLUMNS.reduce((acc, column)=>{
+    const value = rowObject[column];
+    acc[column] = value === undefined || value === null ? '' : value;
+    return acc;
+  }, {});
+}
+
 function csvEscape(value){
   const str = value === null || value === undefined ? '' : String(value);
   if(str.includes('"') || str.includes(',') || /[\n\r]/.test(str)){
@@ -118,6 +126,7 @@ async function dispatchEntryEvent(event, show, entry){
     return {skipped: true};
   }
   const rowObject = buildTableRow(show, entry);
+  const message = buildMessagePayload(rowObject);
   const payload = {
     event,
     schemaVersion: 2,
@@ -134,6 +143,7 @@ async function dispatchEntryEvent(event, show, entry){
       header: EXPORT_COLUMNS,
       row: buildCsvRow(rowObject)
     },
+    message,
     show: {
       id: show?.id || '',
       label: show?.label || '',
@@ -180,5 +190,6 @@ module.exports = {
   dispatchEntryEvent,
   buildTableRow,
   buildCsvRow,
+  buildMessagePayload,
   EXPORT_COLUMNS
 };

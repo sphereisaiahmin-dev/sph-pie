@@ -1,5 +1,11 @@
 const http = require('http');
-const { setWebhookConfig, dispatchEntryEvent, EXPORT_COLUMNS, buildTableRow } = require('../server/webhookDispatcher');
+const {
+  setWebhookConfig,
+  dispatchEntryEvent,
+  EXPORT_COLUMNS,
+  buildTableRow,
+  buildMessagePayload
+} = require('../server/webhookDispatcher');
 
 async function run(){
   const port = 4101;
@@ -73,6 +79,12 @@ async function run(){
   const matches = JSON.stringify(actualRow) === JSON.stringify(expectedRow);
   if(!matches){
     throw new Error('Webhook table row does not match CSV export order');
+  }
+
+  const expectedMessage = buildMessagePayload(expectedRowMap);
+  const actualMessage = capturedPayload.message || {};
+  if(JSON.stringify(actualMessage) !== JSON.stringify(expectedMessage)){
+    throw new Error('Webhook message payload does not mirror expected column mapping');
   }
 
   if(capturedPayload.csv && capturedPayload.csv.header){

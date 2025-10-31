@@ -1014,3 +1014,18 @@ summary::-webkit-details-marker{display:none}
 .webhook-table tr:last-child td{border-bottom:none}
 .webhook-table td:last-child,.webhook-table th:last-child{border-right:none}
 .webhook-table tbody tr:hover{background:rgba(74,163,255,.08)}
+.webhook-json-wrap{display:flex; flex-direction:column; gap:6px}
+.webhook-json-label{text-transform:uppercase; letter-spacing:.08em; font-size:11px; color:var(--text-dim)}
+.webhook-json{
+  margin:0;
+  padding:12px;
+  background:rgba(15,18,24,.92);
+  border:1px solid rgba(255,255,255,.06);
+  border-radius:10px;
+  font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size:12px;
+  line-height:1.45;
+  max-height:220px;
+  overflow:auto
+}
+.webhook-json code{color:inherit}

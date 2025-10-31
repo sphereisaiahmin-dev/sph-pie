@@ -307,8 +307,11 @@ function buildCsvRow(rowObject){
 
 function buildRequestHeaders(){
   const headers = {'Content-Type': 'application/json'};
-  if(activeConfig.secret){
-    headers['X-Drone-Webhook-Secret'] = activeConfig.secret;
+  const customAuthHeader = Array.isArray(activeConfig.headers)
+    ? activeConfig.headers.find(header => header?.name && header.name.toLowerCase() === 'authorization')
+    : null;
+  if(activeConfig.secret && !customAuthHeader){
+    headers.Authorization = `Bearer ${activeConfig.secret}`;
   }
   if(Array.isArray(activeConfig.headers)){
     activeConfig.headers.forEach(({name, value})=>{

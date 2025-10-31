@@ -3,7 +3,9 @@ const express = require('express');
 const morgan = require('morgan');
 const { loadConfig, saveConfig } = require('./configStore');
 const { initProvider, getProvider } = require('./storage');
-const { setWebhookConfig, getWebhookStatus, dispatchEntryEvent } = require('./webhookDispatcher');
+const { setWebhookConfig, getWebhookStatus, dispatchEntryEvent, dispatchShowEvent } = require('./webhookDispatcher');
+
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
 
 async function bootstrap(){
   const app = express();
@@ -141,6 +143,7 @@ async function bootstrap(){
       res.status(404).json({error: 'Show not found'});
       return;
     }
+    await dispatchShowEvent('show.deleted', archived);
     res.json(archived);
   }));
 
@@ -151,7 +154,92 @@ async function bootstrap(){
       res.status(404).json({error: 'Show not found'});
       return;
     }
+    await dispatchShowEvent('show.archived', archived);
     res.json(archived);
+  }));
+
+  app.post('/api/webhook/simulate-month', asyncHandler(async (req, res)=>{
+    const provider = getProvider();
+    if(!provider){
+      res.status(503).json({error: 'Storage provider not ready'});
+      return;
+    }
+    const now = Date.now();
+    const windowStart = now - (30 * DAY_IN_MS);
+
+    function getTimestamp(show){
+      if(!show || typeof show !== 'object'){
+        return null;
+      }
+      const candidates = [show.archivedAt, show.updatedAt, show.createdAt];
+      for(const value of candidates){
+        if(value === null || value === undefined){
+          continue;
+        }
+        const num = Number(value);
+        if(Number.isFinite(num)){
+          return num;
+        }
+        if(typeof value === 'string'){
+          const parsed = Date.parse(value);
+          if(Number.isFinite(parsed)){
+            return parsed;
+          }
+        }
+      }
+      return null;
+    }
+
+    function selectRecentShows(list = []){
+      const normalized = Array.isArray(list) ? list : [];
+      const recent = normalized.filter(show =>{
+        const ts = getTimestamp(show);
+        return ts !== null && ts >= windowStart;
+      });
+      if(recent.length){
+        return recent;
+      }
+      return normalized.slice(0, 30);
+    }
+
+    let shows = [];
+    if(typeof provider.listArchivedShows === 'function'){
+      const archivedShows = await provider.listArchivedShows();
+      shows = selectRecentShows(archivedShows);
+    }
+    if(!shows.length && typeof provider.listShows === 'function'){
+      const activeShows = await provider.listShows();
+      shows = selectRecentShows(activeShows);
+    }
+
+    const limitedShows = shows.slice(0, 90);
+    const requested = limitedShows.length;
+    const requestedAt = new Date().toISOString();
+    let dispatched = 0;
+    let skipped = 0;
+    const errors = [];
+    for(let index = 0; index < limitedShows.length; index += 1){
+      const show = limitedShows[index];
+      const meta = {
+        simulation: {
+          source: 'admin-settings',
+          requestedAt,
+          showIndex: index,
+          totalShows: requested,
+          rangeDays: 30
+        }
+      };
+      const result = await dispatchShowEvent('show.archived', show, meta);
+      if(result?.skipped){
+        skipped += 1;
+      }else if(result?.success === false){
+        errors.push({showId: show?.id || null, error: result.error});
+      }else{
+        dispatched += 1;
+      }
+    }
+
+    res.json({requested, dispatched, skipped, errors});
   }));
 
   app.post('/api/shows/:id/entries', asyncHandler(async (req, res)=>{

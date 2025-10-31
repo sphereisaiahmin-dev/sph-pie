@@ -989,6 +989,7 @@ summary::-webkit-details-marker{display:none}
 
 #configMessage{min-height:20px}
 #webhookConfigure{margin-top:12px;min-width:180px}
+#webhookSimulateMonth{margin-top:12px;min-width:220px}
 
 .webhook-preview{
   margin-top:12px;

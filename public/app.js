@@ -3726,6 +3726,15 @@ function buildWebhookRow(show = {}, entry = {}){
   };
 }
 
+function buildWebhookMessage(row = {}){
+  const payload = {};
+  EXPORT_COLUMNS.forEach(column => {
+    const value = row[column];
+    payload[column] = value === undefined || value === null ? '' : value;
+  });
+  return payload;
+}
+
 function buildSampleWebhookRow(){
   return {
     showId: 'sample-show',
@@ -4011,6 +4020,8 @@ function updateWebhookPreview(){
   if(emptyRow){
     row = buildSampleWebhookRow();
   }
+  const message = buildWebhookMessage(row);
+  const messageJson = JSON.stringify(message, null, 2);
   const headerCells = EXPORT_COLUMNS.map(column=>`<th>${escapeHtml(column)}</th>`).join('');
   const rowCells = EXPORT_COLUMNS.map(column=>`<td>${escapeHtml(row[column] ?? '')}</td>`).join('');
   const statusMessage = !enabled
@@ -4023,6 +4034,10 @@ function updateWebhookPreview(){
         <thead><tr>${headerCells}</tr></thead>
         <tbody><tr>${rowCells}</tr></tbody>
       </table>
+    </div>
+    <div class="webhook-json-wrap">
+      <div class="webhook-json-label">JSON payload (.message)</div>
+      <pre class="webhook-json"><code>${escapeHtml(messageJson)}</code></pre>
     </div>
   `;
   webhookPreview.classList.toggle('is-disabled', !enabled || !url);

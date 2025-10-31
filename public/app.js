@@ -509,12 +509,7 @@ async function loadConfig(){
     secret: data.webhook?.secret || '',
     headersText: formatHeadersText(data.webhook?.headers)
   };
-  state.webhookStatus = {
-    enabled: Boolean(data.webhook?.enabled && data.webhook?.url),
-    method: (data.webhook?.method || 'POST').toUpperCase(),
-    hasSecret: Boolean(data.webhook?.secret),
-    headerCount: Array.isArray(data.webhook?.headers) ? data.webhook.headers.length : 0
-  };
+  state.webhookStatus = normalizeWebhookStatus(data.webhookStatus, data.webhook);
   appTitle.textContent = state.unitLabel;
   unitLabelEl.textContent = state.unitLabel;
   unitLabelSelect.value = state.unitLabel;
@@ -554,12 +549,7 @@ async function loadShows(){
     const storageMeta = (data.storageMeta && typeof data.storageMeta === 'object') ? data.storageMeta : null;
     state.storageMeta = storageMeta || (typeof data.storage === 'string' ? {label: data.storage} : state.storageMeta);
     state.storageLabel = resolveStorageLabel(state.storageMeta || data.storage || state.storageLabel);
-    state.webhookStatus = {
-      enabled: Boolean(data.webhook?.enabled),
-      method: (data.webhook?.method || state.webhookStatus.method || 'POST').toUpperCase(),
-      hasSecret: Boolean(data.webhook?.hasSecret),
-      headerCount: Number.isFinite(data.webhook?.headerCount) ? data.webhook.headerCount : state.webhookStatus.headerCount || 0
-    };
+    state.webhookStatus = normalizeWebhookStatus(data.webhook, state.webhookConfig);
     state.shows = Array.isArray(data.shows) ? data.shows : [];
     sortShows();
     const fallbackId = state.shows[0]?.id || null;
@@ -673,6 +663,10 @@ async function onSimulateWebhookMonth(){
   webhookSimulateBtn.textContent = 'Simulating…';
   try{
     const result = await apiRequest('/api/webhook/simulate-month', {method: 'POST'});
+    if(result?.webhook){
+      state.webhookStatus = normalizeWebhookStatus(result.webhook, state.webhookConfig);
+      updateConnectionIndicator();
+    }
     const dispatched = Number(result?.dispatched) || 0;
     const skipped = Number(result?.skipped) || 0;
     const requested = Number(result?.requested) || 0;
@@ -3688,12 +3682,7 @@ async function onConfigSubmit(event){
       secret: updated.webhook?.secret || '',
       headersText: formatHeadersText(updated.webhook?.headers)
     };
-    state.webhookStatus = {
-      enabled: Boolean(updated.webhook?.enabled && updated.webhook?.url),
-      method: state.webhookConfig.method,
-      hasSecret: Boolean(updated.webhook?.secret),
-      headerCount: Array.isArray(updated.webhook?.headers) ? updated.webhook.headers.length : 0
-    };
+    state.webhookStatus = normalizeWebhookStatus(updated.webhookStatus || updated.webhook, updated.webhook);
     unitLabelSelect.value = state.unitLabel;
     appTitle.textContent = state.unitLabel;
     unitLabelEl.textContent = state.unitLabel;
@@ -3870,13 +3859,34 @@ function setProviderBadge(label){
 
 function setWebhookBadge(status){
   if(!webhookBadge){ return; }
-  const enabled = Boolean(status?.enabled);
+  const verification = status?.verification && typeof status.verification === 'object'
+    ? status.verification
+    : null;
+  const handshakeError = Boolean(verification?.status === 'error' || verification?.error);
+  const enabled = Boolean(status?.enabled && !handshakeError);
   webhookBadge.classList.toggle('badge-webhook-on', enabled);
   webhookBadge.classList.toggle('badge-webhook-off', !enabled);
   const method = (status?.method || 'POST').toUpperCase();
-  const text = enabled ? `Webhook ${method}` : 'Webhook disabled';
-  webhookBadge.textContent = text;
-  webhookBadge.setAttribute('aria-label', `Webhook status: ${text}`);
+  const baseText = enabled ? `Webhook ${method}` : (handshakeError ? 'Webhook error' : 'Webhook disabled');
+  webhookBadge.textContent = baseText;
+  const parts = [`Webhook status: ${baseText}`];
+  if(verification){
+    const statusLabel = verification.status || (handshakeError ? 'error' : 'ok');
+    const httpLabel = verification.httpStatus ? ` (HTTP ${verification.httpStatus})` : '';
+    parts.push(`Handshake ${statusLabel}${httpLabel}`);
+    if(verification.verifiedAt){
+      const verifiedDate = new Date(verification.verifiedAt);
+      if(!Number.isNaN(verifiedDate.valueOf())){
+        parts.push(`Last check ${verifiedDate.toLocaleString()}`);
+      }
+    }
+    if(verification.error){
+      parts.push(`Last error: ${verification.error}`);
+    }
+  }
+  const ariaLabel = parts.join('. ');
+  webhookBadge.setAttribute('aria-label', ariaLabel);
+  webhookBadge.setAttribute('title', parts.join('\n'));
 }
 
 function updateConnectionIndicator(status){
@@ -3884,9 +3894,11 @@ function updateConnectionIndicator(status){
   const host = state.serverHost || '10.241.211.120';
   const port = state.serverPort || 3000;
   const storageLabel = resolveStorageLabel(state.storageLabel);
-  const webhookLabel = state.webhookStatus?.enabled
-    ? `Webhook ${state.webhookStatus.method || 'POST'}`
-    : 'Webhook disabled';
+  const verification = state.webhookStatus?.verification;
+  const handshakeError = Boolean(verification && (verification.status === 'error' || verification.error));
+  const webhookLabel = handshakeError
+    ? 'Webhook error'
+    : (state.webhookStatus?.enabled ? `Webhook ${state.webhookStatus.method || 'POST'}` : 'Webhook disabled');
   setLanAddress();
   setProviderBadge(state.storageMeta || storageLabel);
   setWebhookBadge(state.webhookStatus);
@@ -3905,6 +3917,30 @@ function updateConnectionIndicator(status){
     message = `Connected to ${host}:${port}`;
   }
   connectionStatusEl.textContent = `${message} • ${storageLabel} • ${webhookLabel}`;
+}
+
+function normalizeWebhookStatus(status, fallback){
+  const fallbackConfig = (fallback && typeof fallback === 'object') ? fallback : {};
+  const fallbackMethod = (fallbackConfig.method || fallbackConfig.httpMethod || 'POST').toUpperCase();
+  const fallbackHeaderCount = Number.isFinite(fallbackConfig.headerCount)
+    ? fallbackConfig.headerCount
+    : (Array.isArray(fallbackConfig.headers) ? fallbackConfig.headers.length : 0);
+  const fallbackEnabled = Boolean(fallbackConfig.enabled && (fallbackConfig.url || fallbackConfig.targetUrl));
+  const fallbackSecret = fallbackConfig.hasSecret ?? Boolean(fallbackConfig.secret);
+  const fallbackVerification = (fallbackConfig.verification && typeof fallbackConfig.verification === 'object')
+    ? {...fallbackConfig.verification}
+    : null;
+  const candidate = (status && typeof status === 'object') ? status : {};
+  const verification = (candidate.verification && typeof candidate.verification === 'object')
+    ? {...candidate.verification}
+    : fallbackVerification;
+  return {
+    enabled: Boolean(candidate.enabled ?? fallbackEnabled),
+    method: (candidate.method || fallbackMethod || 'POST').toUpperCase(),
+    hasSecret: Boolean(candidate.hasSecret ?? fallbackSecret),
+    headerCount: Number.isFinite(candidate.headerCount) ? candidate.headerCount : fallbackHeaderCount,
+    verification
+  };
 }
 
 function formatHeadersText(headers){

@@ -9,6 +9,9 @@ const DEFAULT_WEBHOOK_CONFIG = {
   timeoutMs: 8000
 };
 
+const HANDSHAKE_METHODS = ['HEAD', 'OPTIONS', 'GET'];
+const DEFAULT_HANDSHAKE_TIMEOUT = 5000;
+
 const EXPORT_COLUMNS = [
   'showId','showDate','showTime','showLabel','crew','leadPilot','monkeyLead','showNotes',
   'entryId','unitId','planned','launched','status','primaryIssue','subIssue','otherDetail',
@@ -16,9 +19,76 @@ const EXPORT_COLUMNS = [
 ];
 
 let activeConfig = {...DEFAULT_WEBHOOK_CONFIG};
+let verificationState = {
+  status: 'disabled',
+  targetUrl: '',
+  verifiedAt: null,
+  handshakeMethod: null,
+  httpStatus: null,
+  durationMs: null,
+  error: null,
+  errorCode: null
+};
+let lastSkipReason = null;
 
 function isObject(value){
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function toBoolean(value){
+  if(value === true){
+    return true;
+  }
+  if(value === false){
+    return false;
+  }
+  if(typeof value === 'string'){
+    const normalized = value.trim().toLowerCase();
+    if(['true', '1', 'yes', 'on'].includes(normalized)){
+      return true;
+    }
+    if(['false', '0', 'no', 'off', ''].includes(normalized)){
+      return false;
+    }
+  }
+  if(typeof value === 'number'){
+    return value !== 0;
+  }
+  return Boolean(value);
+}
+
+function normalizeTimeoutMs(value){
+  const parsed = Number(value);
+  if(Number.isFinite(parsed) && parsed > 0){
+    return Math.min(parsed, 60000);
+  }
+  return DEFAULT_WEBHOOK_CONFIG.timeoutMs;
+}
+
+function formatUrlForLog(url){
+  if(!url){
+    return '(none)';
+  }
+  try{
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+  }catch(err){
+    return url;
+  }
+}
+
+function updateVerificationState(patch = {}){
+  verificationState = {
+    status: patch.status || verificationState.status || 'unknown',
+    targetUrl: activeConfig.url || '',
+    verifiedAt: patch.verifiedAt || new Date().toISOString(),
+    handshakeMethod: patch.handshakeMethod ?? null,
+    httpStatus: patch.httpStatus ?? null,
+    durationMs: patch.durationMs ?? null,
+    error: patch.error ?? null,
+    errorCode: patch.errorCode ?? null
+  };
+  return verificationState;
 }
 
 function normalizeHeaderList(headers){
@@ -55,14 +125,122 @@ function normalizeHeaderList(headers){
     .filter(Boolean);
 }
 
-function setWebhookConfig(config = {}){
+async function verifyWebhookConnection(options = {}){
+  if(!activeConfig.enabled || !activeConfig.url){
+    const reason = activeConfig.enabled ? 'Missing webhook URL' : 'Webhook disabled in configuration';
+    if(lastSkipReason !== reason){
+      console.info(`[webhook] Skipping verification: ${reason}.`);
+      lastSkipReason = reason;
+    }
+    return updateVerificationState({
+      status: 'disabled',
+      error: reason,
+      handshakeMethod: null,
+      httpStatus: null,
+      durationMs: null
+    });
+  }
+
+  const timeout = Math.min(
+    normalizeTimeoutMs(options.timeoutMs ?? activeConfig.timeoutMs ?? DEFAULT_WEBHOOK_CONFIG.timeoutMs),
+    60000
+  );
+  const headers = buildRequestHeaders();
+  let lastError = null;
+
+  for(const method of HANDSHAKE_METHODS){
+    const started = Date.now();
+    try{
+      const response = await axios({
+        method,
+        url: activeConfig.url,
+        headers,
+        timeout: Math.min(timeout, DEFAULT_HANDSHAKE_TIMEOUT),
+        maxRedirects: 3,
+        validateStatus: () => true
+      });
+      const status = response.status || 0;
+      const duration = Date.now() - started;
+      const success = status >= 200 && status < 400;
+      const authChallenge = status === 401 || status === 403;
+      const methodUnsupported = status === 405 || status === 501;
+      const reachable = status >= 200 && status < 500;
+
+      if(success || authChallenge){
+        console.info(`[webhook] Handshake succeeded via ${method} ${formatUrlForLog(activeConfig.url)} (status=${status}, ${duration}ms).`);
+        lastSkipReason = null;
+        return updateVerificationState({
+          status: 'ok',
+          handshakeMethod: method,
+          httpStatus: status,
+          durationMs: duration,
+          error: null,
+          errorCode: null
+        });
+      }
+
+      if(methodUnsupported){
+        console.info(`[webhook] Handshake method ${method} not allowed (status=${status}). Trying next method.`);
+        lastError = new Error(`HTTP ${status}`);
+        lastError.response = {status};
+        continue;
+      }
+
+      if(reachable){
+        console.info(`[webhook] Handshake reached target via ${method} ${formatUrlForLog(activeConfig.url)} (status=${status}, ${duration}ms).`);
+        lastSkipReason = null;
+        return updateVerificationState({
+          status: 'ok',
+          handshakeMethod: method,
+          httpStatus: status,
+          durationMs: duration,
+          error: null,
+          errorCode: null
+        });
+      }
+
+      lastError = new Error(`HTTP ${status}`);
+      lastError.response = {status};
+      console.warn(`[webhook] Handshake ${method} ${formatUrlForLog(activeConfig.url)} returned status ${status}.`);
+    }catch(error){
+      const duration = Date.now() - started;
+      lastError = error;
+      const status = error?.response?.status;
+      const code = error?.code;
+      const detail = status ? `HTTP ${status}` : (code || error.message);
+      console.warn(`[webhook] Handshake failed via ${method} ${formatUrlForLog(activeConfig.url)} after ${duration}ms: ${detail}`);
+    }
+  }
+
+  const failure = {
+    status: 'error',
+    handshakeMethod: null,
+    httpStatus: lastError?.response?.status ?? null,
+    durationMs: null,
+    error: lastError?.message || 'Unable to verify webhook target',
+    errorCode: lastError?.code || null
+  };
+  console.warn(`[webhook] Unable to verify webhook target ${formatUrlForLog(activeConfig.url)}: ${failure.error}`);
+  return updateVerificationState(failure);
+}
+
+async function setWebhookConfig(config = {}){
   const normalized = {
     ...DEFAULT_WEBHOOK_CONFIG,
-    ...config
+    ...(isObject(config) ? config : {})
   };
+  normalized.enabled = toBoolean(normalized.enabled);
+  normalized.url = typeof normalized.url === 'string' ? normalized.url.trim() : '';
   normalized.method = String(normalized.method || 'POST').toUpperCase();
+  normalized.secret = typeof normalized.secret === 'string' ? normalized.secret : '';
+  normalized.timeoutMs = normalizeTimeoutMs(normalized.timeoutMs);
   normalized.headers = normalizeHeaderList(normalized.headers);
   activeConfig = normalized;
+
+  console.info(`[webhook] Configuration applied (enabled=${activeConfig.enabled ? 'yes' : 'no'}, method=${activeConfig.method}, url=${formatUrlForLog(activeConfig.url)}, headers=${activeConfig.headers.length}).`);
+
+  lastSkipReason = null;
+  return verifyWebhookConnection({timeoutMs: activeConfig.timeoutMs});
 }
 
 function getWebhookStatus(){
@@ -70,7 +248,9 @@ function getWebhookStatus(){
     enabled: Boolean(activeConfig.enabled && activeConfig.url),
     method: activeConfig.method,
     hasSecret: Boolean(activeConfig.secret),
-    headerCount: Array.isArray(activeConfig.headers) ? activeConfig.headers.length : 0
+    headerCount: Array.isArray(activeConfig.headers) ? activeConfig.headers.length : 0,
+    timeoutMs: activeConfig.timeoutMs,
+    verification: {...verificationState}
   };
 }
 
@@ -140,24 +320,67 @@ function buildRequestHeaders(){
   return headers;
 }
 
-async function sendWebhookPayload(payload){
+async function sendWebhookPayload(payload, meta = {}){
+  const started = Date.now();
+  const eventName = meta.event || payload?.event || 'unknown';
   try{
     const response = await axios({
       method: activeConfig.method || 'POST',
       url: activeConfig.url,
       data: payload,
       headers: buildRequestHeaders(),
-      timeout: activeConfig.timeoutMs
+      timeout: activeConfig.timeoutMs,
+      validateStatus: () => true
     });
-    return {success: true, status: response.status};
+    const duration = Date.now() - started;
+    const status = response.status || 0;
+    if(status >= 200 && status < 400){
+      console.info(`[webhook] Dispatched ${eventName} payload (status=${status}, ${duration}ms).`);
+      updateVerificationState({
+        status: 'ok',
+        handshakeMethod: verificationState.handshakeMethod,
+        httpStatus: status,
+        durationMs: duration,
+        error: null,
+        errorCode: null
+      });
+      return {success: true, status, durationMs: duration};
+    }
+    const detail = `HTTP ${status}`;
+    console.warn(`[webhook] Dispatch ${eventName} returned ${detail} after ${duration}ms.`);
+    return {success: false, status, error: detail, durationMs: duration};
   }catch(error){
-    console.warn('Webhook dispatch failed', error.message);
-    return {success: false, error: error.message};
+    const duration = Date.now() - started;
+    const status = error?.response?.status ?? null;
+    const code = error?.code || null;
+    const message = status ? `HTTP ${status}` : (code || error.message || 'Webhook dispatch failed');
+    console.warn(`[webhook] Dispatch ${eventName} failed after ${duration}ms: ${message}`);
+    updateVerificationState({
+      status: 'error',
+      handshakeMethod: verificationState.handshakeMethod,
+      httpStatus: status,
+      durationMs: duration,
+      error: error.message,
+      errorCode: code
+    });
+    return {success: false, error: error.message, status, durationMs: duration, errorCode: code};
   }
 }
 
 async function dispatchEntryEvent(event, show, entry){
   if(!activeConfig.enabled || !activeConfig.url){
+    const reason = !activeConfig.enabled ? 'disabled in configuration' : 'missing URL';
+    if(lastSkipReason !== reason){
+      console.info(`[webhook] Skipping ${event} dispatch because webhook is ${reason}.`);
+      lastSkipReason = reason;
+    }
+    updateVerificationState({
+      status: 'disabled',
+      error: `Webhook ${reason}`,
+      handshakeMethod: null,
+      httpStatus: null,
+      durationMs: null
+    });
     return {skipped: true};
   }
   const rowObject = buildTableRow(show, entry);
@@ -192,7 +415,7 @@ async function dispatchEntryEvent(event, show, entry){
     }
   };
 
-  return sendWebhookPayload(payload);
+  return sendWebhookPayload(payload, {event, kind: 'entry'});
 }
 
 function normalizeEntryList(show){
@@ -235,6 +458,18 @@ function normalizeMeta(meta){
 
 async function dispatchShowEvent(event, show, meta){
   if(!activeConfig.enabled || !activeConfig.url){
+    const reason = !activeConfig.enabled ? 'disabled in configuration' : 'missing URL';
+    if(lastSkipReason !== reason){
+      console.info(`[webhook] Skipping ${event} dispatch because webhook is ${reason}.`);
+      lastSkipReason = reason;
+    }
+    updateVerificationState({
+      status: 'disabled',
+      error: `Webhook ${reason}`,
+      handshakeMethod: null,
+      httpStatus: null,
+      durationMs: null
+    });
     return {skipped: true};
   }
   const normalizedShow = {
@@ -271,11 +506,12 @@ async function dispatchShowEvent(event, show, meta){
   if(normalizedMeta){
     payload.meta = normalizedMeta;
   }
-  return sendWebhookPayload(payload);
+  return sendWebhookPayload(payload, {event, kind: 'show'});
 }
 
 module.exports = {
   setWebhookConfig,
+  verifyWebhookConnection,
   getWebhookStatus,
   dispatchEntryEvent,
   dispatchShowEvent,

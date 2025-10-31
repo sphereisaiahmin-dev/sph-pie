@@ -32,7 +32,7 @@ async function run(){
 
   await new Promise(resolve=> server.listen(port, '127.0.0.1', resolve));
 
-  setWebhookConfig({
+  await setWebhookConfig({
     enabled: true,
     url: `http://127.0.0.1:${port}/hooks`,
     method: 'POST',

@@ -285,12 +285,145 @@ function buildTableRow(show = {}, entry = {}){
   };
 }
 
-function buildMessagePayload(rowObject = {}){
-  return EXPORT_COLUMNS.reduce((acc, column)=>{
-    const value = rowObject[column];
-    acc[column] = value === undefined || value === null ? '' : value;
-    return acc;
-  }, {});
+function toFiniteOrNull(value){
+  if(value === null || value === undefined){
+    return null;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function buildEntrySnapshot(entry = {}){
+  const actionsList = Array.isArray(entry.actions)
+    ? entry.actions.filter(action => action !== undefined && action !== null && String(action).trim() !== '')
+    : [];
+  const statusKey = String(entry.status || '').trim().toLowerCase();
+  const includeIssueDetails = statusKey !== 'completed';
+  return {
+    id: entry.id || '',
+    unitId: entry.unitId || '',
+    planned: entry.planned || '',
+    launched: entry.launched || '',
+    status: entry.status || '',
+    primaryIssue: includeIssueDetails ? (entry.primaryIssue || '') : '',
+    subIssue: includeIssueDetails ? (entry.subIssue || '') : '',
+    severity: includeIssueDetails ? (entry.severity || '') : '',
+    rootCause: includeIssueDetails ? (entry.rootCause || '') : '',
+    actions: actionsList,
+    batteryId: entry.batteryId || '',
+    delaySec: toFiniteOrNull(entry.delaySec),
+    commandRx: entry.commandRx || '',
+    timestamp: entry.ts || null
+  };
+}
+
+function pickTopValue(countMap, totalEntries){
+  let topValue = null;
+  let topCount = 0;
+  for(const [value, count] of countMap.entries()){
+    if(count > topCount){
+      topValue = value;
+      topCount = count;
+    }
+  }
+  if(!topCount){
+    return null;
+  }
+  return {
+    value: topValue,
+    count: topCount,
+    average: totalEntries ? count / totalEntries : null
+  };
+}
+
+function computeShowAnalytics(show = {}){
+  const entries = normalizeEntryList(show);
+  const totalEntries = entries.length;
+  let launchedCount = 0;
+  let issueEntryCount = 0;
+  const primaryCounts = new Map();
+  const subIssueCounts = new Map();
+
+  for(const entry of entries){
+    if(String(entry?.launched || '').trim().toLowerCase() === 'yes'){
+      launchedCount += 1;
+    }
+    const primary = typeof entry?.primaryIssue === 'string' ? entry.primaryIssue.trim() : '';
+    if(primary){
+      issueEntryCount += 1;
+      primaryCounts.set(primary, (primaryCounts.get(primary) || 0) + 1);
+    }
+    const subIssue = typeof entry?.subIssue === 'string' ? entry.subIssue.trim() : '';
+    const otherDetail = typeof entry?.otherDetail === 'string' ? entry.otherDetail.trim() : '';
+    const detail = subIssue || otherDetail;
+    if(detail){
+      subIssueCounts.set(detail, (subIssueCounts.get(detail) || 0) + 1);
+    }
+  }
+
+  const averageLaunches = totalEntries ? launchedCount / totalEntries : null;
+  const averageIssues = totalEntries ? issueEntryCount / totalEntries : null;
+
+  return {
+    totalEntries,
+    launchedCount,
+    issueEntryCount,
+    averageLaunches,
+    averageIssues,
+    topPrimaryIssue: pickTopValue(primaryCounts, totalEntries),
+    topSubIssue: pickTopValue(subIssueCounts, totalEntries)
+  };
+}
+
+function roundAverage(value){
+  if(value === null || value === undefined){
+    return null;
+  }
+  if(!Number.isFinite(value)){
+    return null;
+  }
+  return Number(value.toFixed(2));
+}
+
+function buildSummaryFromAnalytics(analytics = null){
+  const data = analytics || {totalEntries: 0};
+  const primary = data.topPrimaryIssue || null;
+  const sub = data.topSubIssue || null;
+  return {
+    totalEntries: data.totalEntries || 0,
+    averageLaunches: roundAverage(data.averageLaunches ?? null),
+    averageIssues: roundAverage(data.averageIssues ?? null),
+    primaryIssue: primary?.value || '',
+    primaryIssueCount: primary?.count ?? 0,
+    primaryIssueAverage: roundAverage(primary?.average ?? null),
+    subIssue: sub?.value || '',
+    subIssueCount: sub?.count ?? 0,
+    subIssueAverage: roundAverage(sub?.average ?? null)
+  };
+}
+
+function buildMessagePayload(show = {}, entry = null, analytics = null){
+  const normalizedShow = {
+    ...show,
+    entries: normalizeEntryList(show)
+  };
+  const computed = analytics || computeShowAnalytics(normalizedShow);
+  const summary = buildSummaryFromAnalytics(computed);
+  const showSummary = buildShowSummary(normalizedShow);
+
+  if(entry){
+    return {
+      show: showSummary,
+      entry: buildEntrySnapshot(entry),
+      summary
+    };
+  }
+
+  return {
+    show: showSummary,
+    summary,
+    entries: normalizedShow.entries.map(buildEntrySnapshot)
+  };
 }
 
 function csvEscape(value){
@@ -386,16 +519,37 @@ async function dispatchEntryEvent(event, show, entry){
     });
     return {skipped: true};
   }
-  const rowObject = buildTableRow(show, entry);
-  const message = buildMessagePayload(rowObject);
+  const baseEntries = normalizeEntryList(show);
+  const normalizedShow = {
+    ...show,
+    crew: Array.isArray(show?.crew) ? show.crew : [],
+    entries: baseEntries
+  };
+  const includesEntry = entry
+    ? baseEntries.some(item => item?.id && item.id === entry.id)
+    : false;
+  const analyticsEntries = entry && !includesEntry
+    ? normalizeEntryList({...normalizedShow, entries: [...baseEntries, entry]})
+    : baseEntries;
+  const analyticsShow = {
+    ...normalizedShow,
+    entries: analyticsEntries
+  };
+  const rowObject = buildTableRow(normalizedShow, entry);
+  const analytics = computeShowAnalytics(analyticsShow);
+  const summary = buildSummaryFromAnalytics(analytics);
+  const message = buildMessagePayload(analyticsShow, entry, analytics);
+  const showSummary = buildShowSummary(normalizedShow);
+  const entrySnapshot = buildEntrySnapshot(entry);
   const payload = {
     event,
-    schemaVersion: 2,
+    schemaVersion: 3,
     dispatchedAt: new Date().toISOString(),
     target: {
       url: activeConfig.url,
       method: activeConfig.method
     },
+    summary,
     table: {
       columns: EXPORT_COLUMNS,
       row: EXPORT_COLUMNS.map(column => rowObject[column] ?? '')
@@ -405,17 +559,8 @@ async function dispatchEntryEvent(event, show, entry){
       row: buildCsvRow(rowObject)
     },
     message,
-    show: {
-      id: show?.id || '',
-      label: show?.label || '',
-      date: show?.date || '',
-      time: show?.time || '',
-      crew: Array.isArray(show?.crew) ? show.crew : []
-    },
-    entry: {
-      ...entry,
-      actions: Array.isArray(entry?.actions) ? entry.actions : []
-    }
+    show: showSummary,
+    entry: entrySnapshot
   };
 
   return sendWebhookPayload(payload, {event, kind: 'entry'});
@@ -434,16 +579,12 @@ function normalizeEntryList(show){
 }
 
 function buildShowSummary(show = {}){
-  const crew = Array.isArray(show.crew) ? show.crew : [];
   return {
-    id: show.id || '',
     label: show.label || '',
     date: show.date || '',
     time: show.time || '',
-    crew,
     leadPilot: show.leadPilot || '',
     monkeyLead: show.monkeyLead || '',
-    notes: show.notes || '',
     createdAt: show.createdAt ?? null,
     updatedAt: show.updatedAt ?? null,
     archivedAt: show.archivedAt ?? null,
@@ -482,14 +623,19 @@ async function dispatchShowEvent(event, show, meta){
   };
   const showSummary = buildShowSummary(normalizedShow);
   const tableRows = normalizedShow.entries.map(entry => buildTableRow(normalizedShow, entry));
+  const analytics = computeShowAnalytics(normalizedShow);
+  const summary = buildSummaryFromAnalytics(analytics);
+  const message = buildMessagePayload(normalizedShow, null, analytics);
+  const sanitizedEntries = message.entries || [];
   const payload = {
     event,
-    schemaVersion: 2,
+    schemaVersion: 3,
     dispatchedAt: new Date().toISOString(),
     target: {
       url: activeConfig.url,
       method: activeConfig.method
     },
+    summary,
     table: {
       columns: EXPORT_COLUMNS,
       rows: tableRows.map(row => EXPORT_COLUMNS.map(column => row[column] ?? ''))
@@ -498,12 +644,9 @@ async function dispatchShowEvent(event, show, meta){
       header: EXPORT_COLUMNS,
       rows: tableRows.map(row => buildCsvRow(row))
     },
-    message: {
-      show: showSummary,
-      entries: tableRows
-    },
+    message,
     show: showSummary,
-    entries: normalizedShow.entries
+    entries: sanitizedEntries
   };
   const normalizedMeta = normalizeMeta(meta);
   if(normalizedMeta){
@@ -521,5 +664,8 @@ module.exports = {
   buildTableRow,
   buildCsvRow,
   buildMessagePayload,
+  buildSummaryFromAnalytics,
+  computeShowAnalytics,
+  buildEntrySnapshot,
   EXPORT_COLUMNS
 };

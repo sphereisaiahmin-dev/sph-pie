@@ -220,6 +220,7 @@ const webhookSecret = el('webhookSecret');
 const webhookHeaders = el('webhookHeaders');
 const webhookPreview = el('webhookPreview');
 const webhookConfigureBtn = el('webhookConfigure');
+const webhookSimulateBtn = el('webhookSimulateMonth');
 const webhookModal = el('webhookModal');
 const closeWebhookModalBtn = el('closeWebhookModal');
 const webhookForm = el('webhookForm');
@@ -454,6 +455,11 @@ function initUI(){
   if(webhookConfigureBtn){
     webhookConfigureBtn.addEventListener('click', ()=> openWebhookModal());
   }
+  if(webhookSimulateBtn){
+    webhookSimulateBtn.dataset.label = webhookSimulateBtn.textContent;
+    webhookSimulateBtn.addEventListener('click', onSimulateWebhookMonth);
+    updateWebhookSimulationButton();
+  }
   if(closeWebhookModalBtn){
     closeWebhookModalBtn.addEventListener('click', ()=> closeWebhookModal({restore: true}));
   }
@@ -654,6 +660,46 @@ async function onRefreshArchiveList(){
     if(refreshArchiveBtn){
       refreshArchiveBtn.disabled = false;
       refreshArchiveBtn.textContent = originalLabel || 'Refresh archive';
+    }
+  }
+}
+
+async function onSimulateWebhookMonth(){
+  if(!webhookSimulateBtn){
+    return;
+  }
+  const originalLabel = webhookSimulateBtn.dataset.label || webhookSimulateBtn.textContent;
+  webhookSimulateBtn.disabled = true;
+  webhookSimulateBtn.textContent = 'Simulating…';
+  try{
+    const result = await apiRequest('/api/webhook/simulate-month', {method: 'POST'});
+    const dispatched = Number(result?.dispatched) || 0;
+    const skipped = Number(result?.skipped) || 0;
+    const requested = Number(result?.requested) || 0;
+    const errors = Array.isArray(result?.errors) ? result.errors : [];
+    if(errors.length){
+      console.warn('Webhook simulation completed with errors', errors);
+    }
+    if(dispatched > 0){
+      const skippedNote = skipped ? ` (${skipped} skipped)` : '';
+      const errorNote = errors.length ? ` • ${errors.length} error${errors.length === 1 ? '' : 's'}` : '';
+      toast(`Simulated ${dispatched} show${dispatched === 1 ? '' : 's'}${skippedNote}${errorNote}.`);
+    }else if(skipped > 0 && requested > 0){
+      toast('Webhook disabled. Simulation skipped.');
+    }else if(requested === 0){
+      toast('No shows available to simulate', true);
+    }else if(errors.length){
+      toast('Simulation attempted but webhook returned errors', true);
+    }else{
+      toast('Simulation complete');
+    }
+  }catch(err){
+    console.error('Failed to simulate webhook month', err);
+    toast(err.message || 'Failed to simulate webhook delivery', true);
+  }finally{
+    if(webhookSimulateBtn){
+      webhookSimulateBtn.textContent = originalLabel || 'Simulate month delivery';
+      updateWebhookSimulationButton();
     }
   }
 }
@@ -3919,6 +3965,16 @@ function updateWebhookConfigureVisibility(){
   }
 }
 
+function updateWebhookSimulationButton(){
+  if(!webhookSimulateBtn){
+    return;
+  }
+  const enabled = Boolean(webhookEnabled && webhookEnabled.checked);
+  const hasUrl = Boolean(webhookUrl && webhookUrl.value && webhookUrl.value.trim());
+  const shouldDisable = !enabled || !hasUrl;
+  webhookSimulateBtn.disabled = shouldDisable;
+}
+
 function cloneWebhookConfig(config){
   return {
     enabled: Boolean(config?.enabled),
@@ -3998,6 +4054,7 @@ function syncWebhookFields(){
   if(webhookPreview){
     webhookPreview.classList.toggle('is-disabled', !enabled || !(webhookUrl?.value.trim()));
   }
+  updateWebhookSimulationButton();
 }
 
 function updateWebhookPreview(){
@@ -4041,6 +4098,7 @@ function updateWebhookPreview(){
     </div>
   `;
   webhookPreview.classList.toggle('is-disabled', !enabled || !url);
+  updateWebhookSimulationButton();
 }
 
 function toast(message, isError){

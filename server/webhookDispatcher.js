@@ -17,6 +17,10 @@ const EXPORT_COLUMNS = [
 
 let activeConfig = {...DEFAULT_WEBHOOK_CONFIG};
 
+function isObject(value){
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
 function normalizeHeaderList(headers){
   if(!headers){
     return [];
@@ -121,6 +125,37 @@ function buildCsvRow(rowObject){
   return EXPORT_COLUMNS.map(column => csvEscape(rowObject[column] ?? '')).join(',');
 }
 
+function buildRequestHeaders(){
+  const headers = {'Content-Type': 'application/json'};
+  if(activeConfig.secret){
+    headers['X-Drone-Webhook-Secret'] = activeConfig.secret;
+  }
+  if(Array.isArray(activeConfig.headers)){
+    activeConfig.headers.forEach(({name, value})=>{
+      if(name){
+        headers[name] = value;
+      }
+    });
+  }
+  return headers;
+}
+
+async function sendWebhookPayload(payload){
+  try{
+    const response = await axios({
+      method: activeConfig.method || 'POST',
+      url: activeConfig.url,
+      data: payload,
+      headers: buildRequestHeaders(),
+      timeout: activeConfig.timeoutMs
+    });
+    return {success: true, status: response.status};
+  }catch(error){
+    console.warn('Webhook dispatch failed', error.message);
+    return {success: false, error: error.message};
+  }
+}
+
 async function dispatchEntryEvent(event, show, entry){
   if(!activeConfig.enabled || !activeConfig.url){
     return {skipped: true};
@@ -157,37 +192,93 @@ async function dispatchEntryEvent(event, show, entry){
     }
   };
 
-  const headers = {'Content-Type': 'application/json'};
-  if(activeConfig.secret){
-    headers['X-Drone-Webhook-Secret'] = activeConfig.secret;
-  }
-  if(Array.isArray(activeConfig.headers)){
-    activeConfig.headers.forEach(({name, value})=>{
-      if(name){
-        headers[name] = value;
-      }
-    });
-  }
+  return sendWebhookPayload(payload);
+}
 
-  try{
-    const response = await axios({
-      method: activeConfig.method || 'POST',
-      url: activeConfig.url,
-      data: payload,
-      headers,
-      timeout: activeConfig.timeoutMs
-    });
-    return {success: true, status: response.status};
-  }catch(error){
-    console.warn('Webhook dispatch failed', error.message);
-    return {success: false, error: error.message};
+function normalizeEntryList(show){
+  if(!show){
+    return [];
   }
+  return Array.isArray(show.entries)
+    ? show.entries.map(entry => ({
+      ...entry,
+      actions: Array.isArray(entry?.actions) ? entry.actions : []
+    }))
+    : [];
+}
+
+function buildShowSummary(show = {}){
+  const crew = Array.isArray(show.crew) ? show.crew : [];
+  return {
+    id: show.id || '',
+    label: show.label || '',
+    date: show.date || '',
+    time: show.time || '',
+    crew,
+    leadPilot: show.leadPilot || '',
+    monkeyLead: show.monkeyLead || '',
+    notes: show.notes || '',
+    createdAt: show.createdAt ?? null,
+    updatedAt: show.updatedAt ?? null,
+    archivedAt: show.archivedAt ?? null,
+    deletedAt: show.deletedAt ?? null
+  };
+}
+
+function normalizeMeta(meta){
+  if(!isObject(meta)){
+    return null;
+  }
+  const clone = {...meta};
+  return Object.keys(clone).length ? clone : null;
+}
+
+async function dispatchShowEvent(event, show, meta){
+  if(!activeConfig.enabled || !activeConfig.url){
+    return {skipped: true};
+  }
+  const normalizedShow = {
+    ...show,
+    crew: Array.isArray(show?.crew) ? show.crew : [],
+    entries: normalizeEntryList(show)
+  };
+  const showSummary = buildShowSummary(normalizedShow);
+  const tableRows = normalizedShow.entries.map(entry => buildTableRow(normalizedShow, entry));
+  const payload = {
+    event,
+    schemaVersion: 2,
+    dispatchedAt: new Date().toISOString(),
+    target: {
+      url: activeConfig.url,
+      method: activeConfig.method
+    },
+    table: {
+      columns: EXPORT_COLUMNS,
+      rows: tableRows.map(row => EXPORT_COLUMNS.map(column => row[column] ?? ''))
+    },
+    csv: {
+      header: EXPORT_COLUMNS,
+      rows: tableRows.map(row => buildCsvRow(row))
+    },
+    message: {
+      show: showSummary,
+      entries: tableRows
+    },
+    show: showSummary,
+    entries: normalizedShow.entries
+  };
+  const normalizedMeta = normalizeMeta(meta);
+  if(normalizedMeta){
+    payload.meta = normalizedMeta;
+  }
+  return sendWebhookPayload(payload);
 }
 
 module.exports = {
   setWebhookConfig,
   getWebhookStatus,
   dispatchEntryEvent,
+  dispatchShowEvent,
   buildTableRow,
   buildCsvRow,
   buildMessagePayload,

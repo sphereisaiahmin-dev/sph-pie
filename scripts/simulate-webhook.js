@@ -4,7 +4,8 @@ const {
   dispatchEntryEvent,
   EXPORT_COLUMNS,
   buildTableRow,
-  buildMessagePayload
+  buildMessagePayload,
+  buildEntrySnapshot
 } = require('../server/webhookDispatcher');
 
 async function run(){
@@ -72,7 +73,8 @@ async function run(){
     throw new Error('Webhook simulation failed: no payload received');
   }
 
-  const expectedRowMap = buildTableRow(show, entry);
+  const normalizedShow = {...show, entries: [entry]};
+  const expectedRowMap = buildTableRow(normalizedShow, entry);
   const expectedRow = EXPORT_COLUMNS.map(column => expectedRowMap[column] ?? '');
   const actualRow = (capturedPayload.table && capturedPayload.table.row) || [];
 
@@ -81,10 +83,26 @@ async function run(){
     throw new Error('Webhook table row does not match CSV export order');
   }
 
-  const expectedMessage = buildMessagePayload(expectedRowMap);
+  const expectedMessage = buildMessagePayload(normalizedShow, entry);
   const actualMessage = capturedPayload.message || {};
   if(JSON.stringify(actualMessage) !== JSON.stringify(expectedMessage)){
-    throw new Error('Webhook message payload does not mirror expected column mapping');
+    throw new Error('Webhook message payload does not match expected structure');
+  }
+
+  const expectedSummary = expectedMessage.summary || {};
+  const actualSummary = capturedPayload.summary || {};
+  if(JSON.stringify(actualSummary) !== JSON.stringify(expectedSummary)){
+    throw new Error('Webhook summary block does not reflect computed averages');
+  }
+
+  const expectedShow = expectedMessage.show || {};
+  if(JSON.stringify(capturedPayload.show || {}) !== JSON.stringify(expectedShow)){
+    throw new Error('Webhook show summary is not normalized as expected');
+  }
+
+  const expectedEntry = buildEntrySnapshot(entry);
+  if(JSON.stringify(capturedPayload.entry || {}) !== JSON.stringify(expectedEntry)){
+    throw new Error('Webhook entry snapshot still exposes deprecated fields');
   }
 
   if(capturedPayload.csv && capturedPayload.csv.header){

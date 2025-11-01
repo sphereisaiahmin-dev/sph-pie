@@ -269,7 +269,7 @@ const monkeyLeadListInput = el('monkeyLeadList');
 
 const ADMIN_PIN = '4206';
 let adminUnlocked = false;
-let currentConfigSection = 'lead';
+let currentConfigSection = 'admin';
 let webhookModalSnapshot = null;
 
 if(configPanel){
@@ -385,7 +385,7 @@ function initUI(){
           openAdminPinPrompt();
           return;
         }
-        setConfigSection(target || 'lead');
+        setConfigSection(target || 'admin');
       });
     });
   }
@@ -395,7 +395,7 @@ function initUI(){
   if(adminPinCancel){
     adminPinCancel.addEventListener('click', ()=>{
       closeAdminPinPrompt();
-      setConfigSection('lead');
+      toggleConfig(false);
     });
   }
   if(adminPinInput){
@@ -417,7 +417,7 @@ function initUI(){
 
   window.addEventListener('resize', refreshDrawerOffset);
   configForm.addEventListener('submit', onConfigSubmit);
-  setConfigSection('lead');
+  setConfigSection('admin');
   refreshDrawerOffset();
   closeAdminPinPrompt();
   if(webhookEnabled){
@@ -3528,10 +3528,14 @@ function toggleConfig(force){
   requestAnimationFrame(refreshDrawerOffset);
   if(shouldOpen){
     configMessage.textContent = '';
+    setConfigSection('admin');
+    if(!adminUnlocked){
+      openAdminPinPrompt();
+    }
   }else{
     adminUnlocked = false;
     closeAdminPinPrompt();
-    setConfigSection('lead');
+    setConfigSection('admin');
   }
 }
 

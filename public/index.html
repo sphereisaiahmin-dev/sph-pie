@@ -13,8 +13,7 @@
         <h2 id="configTitle">Workspace menu</h2>
       </div>
       <nav class="config-nav" aria-label="Settings categories">
-        <button type="button" class="config-nav-btn is-active" data-config-target="lead">Lead settings</button>
-        <button type="button" class="config-nav-btn" data-config-target="admin">Admin settings</button>
+        <button type="button" class="config-nav-btn is-active" data-config-target="admin">Admin settings</button>
       </nav>
       <div id="adminPinPrompt" class="pin-prompt" role="alertdialog" aria-modal="true" aria-labelledby="adminPinTitle" hidden>
         <div class="pin-card">
@@ -30,7 +29,7 @@
         </div>
       </div>
       <form id="configForm" class="config-form">
-        <section class="config-section grid is-active" data-config-section="lead">
+        <section class="config-section grid is-active" data-config-section="admin">
           <fieldset id="staffFields" class="col-12 provider-fields">
             <legend>Pilots, monkey leads &amp; crew</legend>
             <p class="help">Add one name per line. These lists feed the Lead and Pilot workspaces.</p>
@@ -41,8 +40,6 @@
             <label for="crewList">Crew</label>
             <textarea id="crewList" class="list-input" placeholder="e.g., Jamie"></textarea>
           </fieldset>
-        </section>
-        <section class="config-section grid" data-config-section="admin" aria-hidden="true">
           <div class="col-12">
             <label for="unitLabelSelect">Unit label</label>
             <select id="unitLabelSelect" name="unitLabel">

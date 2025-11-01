@@ -120,6 +120,10 @@ const state = {
   serverPort: 3000,
   storageLabel: 'SQL.js storage v2',
   storageMeta: null,
+  session: null,
+  sessionInfo: null,
+  sessionLoading: false,
+  userDirectory: [],
   newShowDraft: createEmptyShowDraft(),
   showHeaderShowErrors: false,
   isCreatingShow: false,
@@ -205,13 +209,29 @@ const configPanel = el('configPanel');
 const cancelConfigBtn = el('cancelConfig');
 const configForm = el('configForm');
 const configMessage = el('configMessage');
+const configNavAdminBtn = el('configNavAdmin');
+const sessionOverviewName = el('sessionOverviewName');
+const sessionOverviewEmail = el('sessionOverviewEmail');
+const sessionOverviewRoles = el('sessionOverviewRoles');
+const sessionOverviewMessage = el('sessionOverviewMessage');
+const todayShowList = el('todayShowList');
+const refreshTodayShowsBtn = el('refreshTodayShows');
+const logoutBtn = el('logoutBtn');
+const sessionChip = el('sessionChip');
+const sessionChipName = el('sessionChipName');
+const sessionChipRoles = el('sessionChipRoles');
+const loginForm = el('loginForm');
+const loginEmailInput = el('loginEmail');
+const loginPasswordInput = el('loginPassword');
+const loginMessage = el('loginMessage');
+const loginSubmitBtn = el('loginSubmit');
+const userSettingsForm = el('userSettingsForm');
+const userCurrentPasswordInput = el('userCurrentPassword');
+const userNewPasswordInput = el('userNewPassword');
+const userConfirmPasswordInput = el('userConfirmPassword');
+const userSettingsMessage = el('userSettingsMessage');
 const configNavButtons = qsa('[data-config-target]');
 const configSections = qsa('[data-config-section]');
-const adminPinPrompt = el('adminPinPrompt');
-const adminPinInput = el('adminPinInput');
-const adminPinSubmit = el('adminPinSubmit');
-const adminPinCancel = el('adminPinCancel');
-const adminPinError = el('adminPinError');
 const unitLabelSelect = el('unitLabelSelect');
 const webhookEnabled = el('webhookEnabled');
 const webhookUrl = el('webhookUrl');
@@ -267,9 +287,7 @@ const pilotListInput = el('pilotList');
 const crewListInput = el('crewList');
 const monkeyLeadListInput = el('monkeyLeadList');
 
-const ADMIN_PIN = '4206';
-let adminUnlocked = false;
-let currentConfigSection = 'admin';
+let currentConfigSection = 'overview';
 let webhookModalSnapshot = null;
 
 if(configPanel){
@@ -282,21 +300,22 @@ init().catch(err=>{
 });
 
 async function init(){
-  await loadConfig();
-  updateConnectionIndicator('loading');
-  await loadStaff();
-  await loadShows();
   initUI();
   setupSyncChannel();
-  populateUnitOptions();
-  populateIssues();
-  renderActionsChips(actionsChips, []);
-  setCurrentShow(state.currentShowId || null);
-  setView('landing');
+  await bootstrapSession();
+  if(!state.session){
+    setView('login');
+    updateAuthVisibility();
+    return;
+  }
+  await initialiseForSession();
 }
 
 function initUI(){
   [stCompleted, stNoLaunch, stAbort].forEach(btn=>{
+    if(!btn){
+      return;
+    }
     btn.addEventListener('click', ()=>{
       setStatus(btn.dataset.status);
       updateIssueVisibility();
@@ -374,38 +393,22 @@ function initUI(){
   el('closeEdit').addEventListener('click', closeEditModal);
   el('saveEdit').addEventListener('click', saveEditEntry);
 
-  configBtn.addEventListener('click', ()=> toggleConfig());
-  cancelConfigBtn.addEventListener('click', ()=> toggleConfig(false));
+  if(configBtn){
+    configBtn.addEventListener('click', ()=> toggleConfig());
+  }
+  if(cancelConfigBtn){
+    cancelConfigBtn.addEventListener('click', ()=> toggleConfig(false));
+  }
   if(configNavButtons.length){
     configNavButtons.forEach(btn=>{
       btn.setAttribute('aria-pressed', btn.classList.contains('is-active') ? 'true' : 'false');
       btn.addEventListener('click', ()=>{
-        const target = btn.dataset.configTarget;
-        if(target === 'admin' && !adminUnlocked){
-          openAdminPinPrompt();
-          return;
-        }
-        setConfigSection(target || 'admin');
+        const target = btn.dataset.configTarget || 'overview';
+        setConfigSection(target);
       });
     });
   }
-  if(adminPinSubmit){
-    adminPinSubmit.addEventListener('click', submitAdminPin);
-  }
-  if(adminPinCancel){
-    adminPinCancel.addEventListener('click', ()=>{
-      closeAdminPinPrompt();
-      toggleConfig(false);
-    });
-  }
-  if(adminPinInput){
-    adminPinInput.addEventListener('keydown', event=>{
-      if(event.key === 'Enter'){
-        event.preventDefault();
-        submitAdminPin();
-      }
-    });
-  }
+
   document.addEventListener('keydown', e=>{
     if(e.key === 'Escape'){
       closeAllShowMenus();
@@ -416,10 +419,11 @@ function initUI(){
   });
 
   window.addEventListener('resize', refreshDrawerOffset);
-  configForm.addEventListener('submit', onConfigSubmit);
-  setConfigSection('admin');
-  refreshDrawerOffset();
-  closeAdminPinPrompt();
+
+  if(configForm){
+    configForm.addEventListener('submit', onConfigSubmit);
+  }
+
   if(webhookEnabled){
     webhookEnabled.addEventListener('change', ()=>{
       syncWebhookFields();
@@ -433,24 +437,16 @@ function initUI(){
     });
   }
   if(webhookUrl){
-    webhookUrl.addEventListener('input', ()=>{
-      updateWebhookPreview();
-    });
+    webhookUrl.addEventListener('input', ()=> updateWebhookPreview());
   }
   if(webhookMethod){
-    webhookMethod.addEventListener('change', ()=>{
-      updateWebhookPreview();
-    });
+    webhookMethod.addEventListener('change', ()=> updateWebhookPreview());
   }
   if(webhookSecret){
-    webhookSecret.addEventListener('input', ()=>{
-      updateWebhookPreview();
-    });
+    webhookSecret.addEventListener('input', ()=> updateWebhookPreview());
   }
   if(webhookHeaders){
-    webhookHeaders.addEventListener('input', ()=>{
-      updateWebhookPreview();
-    });
+    webhookHeaders.addEventListener('input', ()=> updateWebhookPreview());
   }
   if(webhookConfigureBtn){
     webhookConfigureBtn.addEventListener('click', ()=> openWebhookModal());
@@ -472,6 +468,7 @@ function initUI(){
       saveWebhookModal();
     });
   }
+
   if(refreshShowsBtn){
     refreshShowsBtn.dataset.label = refreshShowsBtn.textContent;
     refreshShowsBtn.addEventListener('click', onRefreshShows);
@@ -487,7 +484,76 @@ function initUI(){
     }
   });
 
+  if(loginForm){
+    loginForm.addEventListener('submit', onLoginSubmit);
+  }
+  if(logoutBtn){
+    logoutBtn.addEventListener('click', onLogout);
+  }
+  if(refreshTodayShowsBtn){
+    refreshTodayShowsBtn.addEventListener('click', ()=>{
+      onRefreshShows();
+    });
+  }
+  if(userSettingsForm){
+    userSettingsForm.addEventListener('submit', onUserSettingsSubmit);
+  }
+
   renderShowHeaderDraft();
+  setConfigSection('overview');
+  refreshDrawerOffset();
+}
+
+async function bootstrapSession(){
+  state.sessionLoading = true;
+  try{
+    const data = await apiRequest('/api/session', {method: 'GET'});
+    state.session = data?.user || null;
+    state.sessionInfo = data?.session || null;
+  }catch(err){
+    if(err && err.status === 401){
+      state.session = null;
+      state.sessionInfo = null;
+    }else{
+      console.error('Failed to fetch session', err);
+      state.session = null;
+      state.sessionInfo = null;
+      toast('Unable to verify session', true);
+    }
+  }finally{
+    state.sessionLoading = false;
+    updateConfigNavVisibility();
+    updateSessionOverview();
+    updateAuthVisibility();
+  }
+}
+
+async function initialiseForSession(){
+  state.sessionLoading = true;
+  try{
+    await loadConfig();
+    updateConnectionIndicator('loading');
+    await loadStaff();
+    await loadShows();
+    populateUnitOptions();
+    populateIssues();
+    renderActionsChips(actionsChips, []);
+    setCurrentShow(state.currentShowId || null);
+    renderShowHeaderDraft();
+    if(!hasRole('admin') && currentConfigSection === 'admin'){
+      setConfigSection('overview');
+    }
+    setView('landing');
+    updateSessionOverview();
+    updateTodayShowSummary();
+    setUserSettingsMessage('');
+    updateAuthVisibility();
+  }catch(err){
+    console.error('Failed to initialise workspace data', err);
+    toast('Failed to load workspace data', true);
+  }finally{
+    state.sessionLoading = false;
+  }
 }
 
 async function loadConfig(){
@@ -557,6 +623,7 @@ async function loadShows(){
     updateConnectionIndicator();
     updateWebhookPreview();
     await loadArchivedShows({silent: true, preserveSelection: true});
+    updateTodayShowSummary();
   }catch(err){
     console.error('Failed to load shows', err);
     state.shows = [];
@@ -653,6 +720,390 @@ async function onRefreshArchiveList(){
     }
   }
 }
+
+
+async function onLoginSubmit(event){
+  event.preventDefault();
+  if(!loginEmailInput || !loginPasswordInput){
+    return;
+  }
+  const email = loginEmailInput.value ? loginEmailInput.value.trim().toLowerCase() : '';
+  const password = loginPasswordInput.value || '';
+  if(!email || !password){
+    if(loginMessage){
+      loginMessage.textContent = 'Enter email and password.';
+      loginMessage.hidden = false;
+    }
+    return;
+  }
+  if(loginMessage){
+    loginMessage.hidden = true;
+  }
+  if(loginSubmitBtn){
+    loginSubmitBtn.disabled = true;
+    loginSubmitBtn.textContent = 'Signing in…';
+  }
+  try{
+    const data = await apiRequest('/api/auth/login', {
+      method: 'POST',
+      body: {email, password}
+    });
+    state.session = data?.user || null;
+    state.sessionInfo = data?.session || null;
+    if(loginForm){
+      loginForm.reset();
+    }
+    updateSessionOverview();
+    updateConfigNavVisibility();
+    updateAuthVisibility();
+    await initialiseForSession();
+  }catch(err){
+    console.error('Login failed', err);
+    if(loginMessage){
+      loginMessage.textContent = err.message || 'Failed to sign in';
+      loginMessage.hidden = false;
+    }
+  }finally{
+    if(loginSubmitBtn){
+      loginSubmitBtn.disabled = false;
+      loginSubmitBtn.textContent = 'Sign in';
+    }
+  }
+}
+
+async function onLogout(){
+  const originalLabel = logoutBtn ? logoutBtn.textContent : '';
+  if(logoutBtn){
+    logoutBtn.disabled = true;
+    logoutBtn.textContent = 'Signing out…';
+  }
+  try{
+    await apiRequest('/api/auth/logout', {method: 'POST'});
+  }catch(err){
+    console.error('Logout failed', err);
+  }finally{
+    if(logoutBtn){
+      logoutBtn.disabled = false;
+      logoutBtn.textContent = originalLabel || 'Sign out';
+    }
+  }
+  state.session = null;
+  state.sessionInfo = null;
+  state.shows = [];
+  state.currentShowId = null;
+  state.archivedShows = [];
+  state.currentArchivedShowId = null;
+  updateSessionOverview();
+  updateTodayShowSummary();
+  setUserSettingsMessage('');
+  updateAuthVisibility();
+  setView('login');
+  toast('Signed out');
+}
+
+async function onUserSettingsSubmit(event){
+  event.preventDefault();
+  if(!userCurrentPasswordInput || !userNewPasswordInput || !userConfirmPasswordInput){
+    return;
+  }
+  const currentPassword = userCurrentPasswordInput.value || '';
+  const newPassword = userNewPasswordInput.value || '';
+  const confirmPassword = userConfirmPasswordInput.value || '';
+  if(newPassword !== confirmPassword){
+    setUserSettingsMessage('New passwords do not match.', true);
+    return;
+  }
+  if(newPassword.length < 8){
+    setUserSettingsMessage('Password must be at least 8 characters.', true);
+    return;
+  }
+  setUserSettingsMessage('');
+  const submitBtn = userSettingsForm ? userSettingsForm.querySelector('button[type="submit"]') : null;
+  const originalLabel = submitBtn ? submitBtn.textContent : '';
+  if(submitBtn){
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Updating…';
+  }
+  try{
+    await apiRequest('/api/auth/change-password', {
+      method: 'POST',
+      body: {currentPassword, newPassword}
+    });
+    if(userSettingsForm){
+      userSettingsForm.reset();
+    }
+    setUserSettingsMessage('Password updated successfully.');
+    toast('Password updated');
+  }catch(err){
+    console.error('Failed to change password', err);
+    setUserSettingsMessage(err.message || 'Failed to update password', true);
+  }finally{
+    if(submitBtn){
+      submitBtn.disabled = false;
+      submitBtn.textContent = originalLabel || 'Update password';
+    }
+  }
+}
+
+function setUserSettingsMessage(message, isError = false){
+  if(!userSettingsMessage){
+    return;
+  }
+  if(message){
+    userSettingsMessage.textContent = message;
+    userSettingsMessage.hidden = false;
+    if(isError){
+      userSettingsMessage.classList.add('error');
+    }else{
+      userSettingsMessage.classList.remove('error');
+    }
+  }else{
+    userSettingsMessage.textContent = '';
+    userSettingsMessage.hidden = true;
+    userSettingsMessage.classList.remove('error');
+  }
+}
+
+function updateSessionOverview(){
+  const user = state.session || null;
+  const roles = getSessionRoles().map(formatRoleLabel).filter(Boolean);
+  if(sessionOverviewName){
+    sessionOverviewName.textContent = user ? (user.name || user.displayName || user.email || 'Signed-in user') : 'Not signed in';
+  }
+  if(sessionOverviewEmail){
+    if(user?.email){
+      sessionOverviewEmail.textContent = user.email;
+      sessionOverviewEmail.hidden = false;
+    }else{
+      sessionOverviewEmail.textContent = '';
+      sessionOverviewEmail.hidden = true;
+    }
+  }
+  if(sessionOverviewRoles){
+    sessionOverviewRoles.textContent = user ? (roles.length ? roles.join(' • ') : 'No roles assigned') : '';
+  }
+  if(sessionOverviewMessage){
+    if(user){
+      const expiresAt = toNumber(state.sessionInfo?.expiresAt);
+      const createdAt = toNumber(state.sessionInfo?.createdAt);
+      if(Number.isFinite(expiresAt)){
+        sessionOverviewMessage.textContent = `Session expires ${formatDateTime(expiresAt)}.`;
+      }else if(Number.isFinite(createdAt)){
+        sessionOverviewMessage.textContent = `Signed in ${formatDateTime(createdAt)}.`;
+      }else{
+        sessionOverviewMessage.textContent = 'Session active.';
+      }
+      sessionOverviewMessage.hidden = false;
+    }else{
+      sessionOverviewMessage.textContent = 'Sign in to access workspace tools.';
+      sessionOverviewMessage.hidden = false;
+    }
+  }
+  if(sessionChip){
+    if(user){
+      sessionChip.hidden = false;
+      if(sessionChipName){
+        sessionChipName.textContent = user.name || user.displayName || user.email || 'User';
+      }
+      if(sessionChipRoles){
+        sessionChipRoles.textContent = roles.join(' • ') || 'No roles';
+      }
+    }else{
+      sessionChip.hidden = true;
+    }
+  }
+}
+
+function updateTodayShowSummary(){
+  if(!todayShowList){
+    return;
+  }
+  todayShowList.innerHTML = '';
+  if(!state.session){
+    const info = document.createElement('p');
+    info.className = 'today-show-empty';
+    info.textContent = 'Sign in to see today\'s schedule.';
+    todayShowList.appendChild(info);
+    return;
+  }
+  const shows = Array.isArray(state.shows) ? state.shows : [];
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  const todaysShows = shows.filter(show => toDateKey(show?.date) === todayKey);
+  if(!todaysShows.length){
+    const empty = document.createElement('p');
+    empty.className = 'today-show-empty';
+    empty.textContent = 'No shows scheduled for today.';
+    todayShowList.appendChild(empty);
+    return;
+  }
+  todaysShows.sort((a, b)=>{
+    const aTime = (a.time || '').toString();
+    const bTime = (b.time || '').toString();
+    return aTime.localeCompare(bTime);
+  });
+  todaysShows.forEach(show =>{
+    const item = document.createElement('div');
+    item.className = 'today-show-item';
+    item.setAttribute('role', 'listitem');
+    const title = document.createElement('strong');
+    const dateLabel = formatDateUS(show.date) || 'Date TBD';
+    const timeLabel = formatTime12Hour(show.time) || 'Time TBD';
+    const label = show.label ? ` • ${show.label}` : '';
+    title.textContent = `${dateLabel} • ${timeLabel}${label}`;
+    const meta = document.createElement('div');
+    meta.className = 'today-show-meta';
+    const leadName = resolveAssignmentName(show.lead, show.leadPilot);
+    if(leadName){
+      const span = document.createElement('span');
+      span.textContent = `Lead: ${leadName}`;
+      meta.appendChild(span);
+    }
+    const crewLeadName = resolveAssignmentName(show.crewLead, show.monkeyLead);
+    if(crewLeadName){
+      const span = document.createElement('span');
+      span.textContent = `Crew lead: ${crewLeadName}`;
+      meta.appendChild(span);
+    }
+    const crewCount = Array.isArray(show.crewAssignments) ? show.crewAssignments.length : (Array.isArray(show.crew) ? show.crew.length : 0);
+    if(crewCount){
+      const span = document.createElement('span');
+      span.textContent = `Crew: ${crewCount}`;
+      meta.appendChild(span);
+    }
+    const entryCount = Array.isArray(show.entries) ? show.entries.length : 0;
+    if(entryCount){
+      const span = document.createElement('span');
+      span.textContent = `Entries: ${entryCount}`;
+      meta.appendChild(span);
+    }
+    item.appendChild(title);
+    if(meta.childNodes.length){
+      item.appendChild(meta);
+    }
+    todayShowList.appendChild(item);
+  });
+}
+
+function resolveAssignmentName(assignment, fallback){
+  if(assignment && typeof assignment === 'object'){
+    if(typeof assignment.displayName === 'string' && assignment.displayName.trim()){
+      return assignment.displayName.trim();
+    }
+    if(typeof assignment.name === 'string' && assignment.name.trim()){
+      return assignment.name.trim();
+    }
+  }
+  if(typeof fallback === 'string' && fallback.trim()){
+    return fallback.trim();
+  }
+  return '';
+}
+
+function updateConfigNavVisibility(){
+  if(!configNavAdminBtn){
+    return;
+  }
+  const isAdmin = hasRole('admin');
+  configNavAdminBtn.hidden = !isAdmin;
+  if(!isAdmin && currentConfigSection === 'admin'){
+    setConfigSection('overview');
+  }
+}
+
+function updateAuthVisibility(){
+  const isAuthenticated = Boolean(state.session);
+  if(configBtn){
+    configBtn.hidden = !isAuthenticated;
+    configBtn.setAttribute('aria-expanded', isAuthenticated && document.body.classList.contains('menu-open') ? 'true' : 'false');
+  }
+  if(refreshTodayShowsBtn){
+    refreshTodayShowsBtn.hidden = !isAuthenticated;
+  }
+  if(logoutBtn){
+    logoutBtn.hidden = !isAuthenticated;
+    logoutBtn.disabled = !isAuthenticated;
+  }
+  if(!isAuthenticated){
+    document.body.classList.remove('menu-open');
+    if(configPanel){
+      configPanel.classList.remove('open');
+      configPanel.setAttribute('aria-hidden', 'true');
+    }
+    document.body.style.setProperty('--drawer-active-width', '0px');
+  }
+  updateConfigNavVisibility();
+}
+function handleUnauthorized(message){
+  const hadSession = Boolean(state.session);
+  state.session = null;
+  state.sessionInfo = null;
+  state.shows = [];
+  state.currentShowId = null;
+  state.archivedShows = [];
+  state.currentArchivedShowId = null;
+  if(hadSession){
+    toast(message || 'Session expired. Please sign in again.', true);
+  }
+  updateSessionOverview();
+  updateTodayShowSummary();
+  updateAuthVisibility();
+  setView('login');
+}
+
+
+function getSessionRoles(){
+  const roles = state.session?.roles;
+  if(!Array.isArray(roles)){
+    return [];
+  }
+  return roles.map(role => typeof role === 'string' ? role.toLowerCase() : String(role || '').toLowerCase());
+}
+
+function hasRole(expected){
+  const roles = getSessionRoles();
+  if(Array.isArray(expected)){
+    return expected.some(role => roles.includes(String(role || '').toLowerCase()));
+  }
+  if(typeof expected === 'string'){
+    return roles.includes(expected.toLowerCase());
+  }
+  return false;
+}
+
+function formatRoleLabel(role){
+  const normalized = typeof role === 'string' ? role.toLowerCase() : String(role || '').toLowerCase();
+  switch(normalized){
+    case 'admin': return 'Admin';
+    case 'lead': return 'Lead';
+    case 'operator': return 'Operator';
+    case 'crew': return 'Crew';
+    default: return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : '';
+  }
+}
+
+function toDateKey(value){
+  if(typeof value !== 'string'){
+    return null;
+  }
+  const trimmed = value.trim();
+  if(!trimmed){
+    return null;
+  }
+  if(/^\d{4}-\d{2}-\d{2}$/.test(trimmed)){
+    return trimmed;
+  }
+  const date = new Date(trimmed);
+  if(Number.isNaN(date.getTime())){
+    return null;
+  }
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+
+
 
 async function onSimulateWebhookMonth(){
   if(!webhookSimulateBtn){
@@ -3473,10 +3924,12 @@ function renderOperatorOptions(){
 
 function setView(view){
   state.currentView = view;
-  document.body.classList.remove('view-landing','view-lead','view-pilot','view-archive');
+  ['landing','lead','pilot','archive','login'].forEach(cls=>{
+    document.body.classList.remove(`view-${cls}`);
+  });
   document.body.classList.add(`view-${view}`);
   if(viewBadge){
-    if(view === 'landing'){
+    if(view === 'landing' || view === 'login'){
       viewBadge.hidden = true;
       viewBadge.classList.remove('view-badge-pilot');
     }else{
@@ -3494,9 +3947,9 @@ function setView(view){
     }
   }
   if(roleHomeBtn){
-    roleHomeBtn.hidden = view === 'landing';
+    roleHomeBtn.hidden = view === 'landing' || view === 'login';
   }
-  if(view === 'landing'){
+  if(view === 'landing' || view === 'login'){
     toggleConfig(false);
   }
   if(view === 'pilot'){
@@ -3507,12 +3960,23 @@ function setView(view){
   if(view === 'archive'){
     renderArchiveSelect();
   }
+  if(view === 'login'){
+    updateSessionOverview();
+    updateTodayShowSummary();
+  }
 }
 
 function toggleConfig(force){
+}
+
+function toggleConfig(force){
+  const isAuthenticated = Boolean(state.session);
   const shouldOpen = typeof force === 'boolean'
     ? force
-    : !document.body.classList.contains('menu-open');
+    : (isAuthenticated && !document.body.classList.contains('menu-open'));
+  if(!isAuthenticated && shouldOpen){
+    return;
+  }
   if(configBtn){
     configBtn.setAttribute('aria-expanded', String(shouldOpen));
     configBtn.classList.toggle('is-active', shouldOpen);
@@ -3527,16 +3991,16 @@ function toggleConfig(force){
   }
   requestAnimationFrame(refreshDrawerOffset);
   if(shouldOpen){
-    configMessage.textContent = '';
-    setConfigSection('admin');
-    if(!adminUnlocked){
-      openAdminPinPrompt();
+    if(configMessage){
+      configMessage.textContent = '';
     }
-  }else{
-    adminUnlocked = false;
-    closeAdminPinPrompt();
-    setConfigSection('admin');
+    if(currentConfigSection === 'admin' && !hasRole('admin')){
+      setConfigSection('overview');
+    }
   }
+}
+
+function refreshDrawerOffset(){
 }
 
 function refreshDrawerOffset(){
@@ -3551,85 +4015,28 @@ function refreshDrawerOffset(){
 }
 
 function setConfigSection(section){
-  currentConfigSection = section;
-  if(section !== 'admin'){
-    if(adminUnlocked){
-      adminUnlocked = false;
-    }
-    closeAdminPinPrompt();
+  let target = section || 'overview';
+  if(target === 'admin' && !hasRole('admin')){
+    toast('Admin access required', true);
+    target = 'overview';
   }
+  currentConfigSection = target;
   if(configSections.length){
     configSections.forEach(sec=>{
-      const isActive = sec.dataset.configSection === section;
+      const isActive = sec.dataset.configSection === target;
       sec.classList.toggle('is-active', isActive);
       sec.setAttribute('aria-hidden', isActive ? 'false' : 'true');
     });
   }
   if(configNavButtons.length){
     configNavButtons.forEach(btn=>{
-      const isActive = btn.dataset.configTarget === section;
+      const isActive = btn.dataset.configTarget === target;
       btn.classList.toggle('is-active', isActive);
       btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     });
   }
 }
 
-function openAdminPinPrompt(){
-  if(adminUnlocked){
-    setConfigSection('admin');
-    return;
-  }
-  if(adminPinPrompt){
-    adminPinPrompt.hidden = false;
-    adminPinPrompt.setAttribute('aria-hidden', 'false');
-    if(adminPinError){
-      adminPinError.hidden = true;
-    }
-    if(adminPinInput){
-      adminPinInput.value = '';
-      requestAnimationFrame(()=> adminPinInput.focus());
-    }
-    return;
-  }
-  const pin = window.prompt('Enter admin PIN');
-  if(pin === ADMIN_PIN){
-    adminUnlocked = true;
-    setConfigSection('admin');
-  }else if(pin !== null){
-    toast('Incorrect PIN', true);
-  }
-}
-
-function closeAdminPinPrompt(){
-  if(adminPinPrompt){
-    adminPinPrompt.hidden = true;
-    adminPinPrompt.setAttribute('aria-hidden', 'true');
-  }
-  if(adminPinInput){
-    adminPinInput.value = '';
-  }
-  if(adminPinError){
-    adminPinError.hidden = true;
-  }
-}
-
-function submitAdminPin(){
-  if(!adminPinInput){
-    return;
-  }
-  const value = adminPinInput.value ? adminPinInput.value.trim() : '';
-  if(value === ADMIN_PIN){
-    adminUnlocked = true;
-    closeAdminPinPrompt();
-    setConfigSection('admin');
-  }else{
-    if(adminPinError){
-      adminPinError.hidden = false;
-    }
-    adminPinInput.focus();
-    adminPinInput.select?.();
-  }
-}
 
 async function onConfigSubmit(event){
   event.preventDefault();
@@ -4304,9 +4711,15 @@ async function apiRequest(url, options){
   }catch(err){
     data = null;
   }
+  if(res.status === 401 && !(typeof url === 'string' && url.includes('/api/auth/login'))){
+    handleUnauthorized(data?.error);
+  }
   if(!res.ok){
     const message = data && data.error ? data.error : `Request failed (${res.status})`;
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = res.status;
+    error.payload = data;
+    throw error;
   }
   return data;
 }

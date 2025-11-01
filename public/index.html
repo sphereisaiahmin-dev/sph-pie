@@ -13,67 +13,105 @@
         <h2 id="configTitle">Workspace menu</h2>
       </div>
       <nav class="config-nav" aria-label="Settings categories">
-        <button type="button" class="config-nav-btn is-active" data-config-target="admin">Admin settings</button>
+        <button type="button" class="config-nav-btn is-active" data-config-target="overview">Session overview</button>
+        <button type="button" class="config-nav-btn" data-config-target="user">User settings</button>
+        <button type="button" id="configNavAdmin" class="config-nav-btn" data-config-target="admin" hidden>Admin settings</button>
       </nav>
-      <div id="adminPinPrompt" class="pin-prompt" role="alertdialog" aria-modal="true" aria-labelledby="adminPinTitle" hidden>
-        <div class="pin-card">
-          <h3 id="adminPinTitle">Admin PIN required</h3>
-          <p class="help">Enter the 4-digit PIN to continue.</p>
-          <label for="adminPinInput">PIN</label>
-          <input id="adminPinInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" />
-          <div class="row pin-actions">
-            <button type="button" id="adminPinCancel" class="btn ghost">Cancel</button>
-            <button type="button" id="adminPinSubmit" class="btn primary">Unlock</button>
+      <div class="config-content">
+        <section id="configOverview" class="config-section grid is-active" data-config-section="overview">
+          <div class="col-12 overview-card">
+            <h3>Signed in</h3>
+            <p id="sessionOverviewName" class="overview-primary"></p>
+            <p id="sessionOverviewEmail" class="help"></p>
+            <p id="sessionOverviewRoles" class="session-roles"></p>
+            <div class="row overview-actions">
+              <div class="grow"></div>
+              <button type="button" id="logoutBtn" class="btn ghost" hidden>Sign out</button>
+            </div>
+            <div id="sessionOverviewMessage" class="help" role="status" aria-live="polite"></div>
           </div>
-          <div id="adminPinError" class="error" role="alert" hidden>Incorrect PIN. Try again.</div>
-        </div>
-      </div>
-      <form id="configForm" class="config-form">
-        <section class="config-section grid is-active" data-config-section="admin">
-          <fieldset id="staffFields" class="col-12 provider-fields">
-            <legend>Pilots, monkey leads &amp; crew</legend>
-            <p class="help">Add one name per line. These lists feed the Lead and Pilot workspaces.</p>
-            <label for="pilotList">Pilots</label>
-            <textarea id="pilotList" class="list-input" placeholder="e.g., Alex"></textarea>
-            <label for="monkeyLeadList">Monkey leads</label>
-            <textarea id="monkeyLeadList" class="list-input" placeholder="e.g., Cleo"></textarea>
-            <label for="crewList">Crew</label>
-            <textarea id="crewList" class="list-input" placeholder="e.g., Jamie"></textarea>
-          </fieldset>
-          <div class="col-12">
-            <label for="unitLabelSelect">Unit label</label>
-            <select id="unitLabelSelect" name="unitLabel">
-              <option value="Drone">Drone</option>
-              <option value="Monkey">Monkey</option>
-            </select>
-            <p class="help">Controls how units are referenced across the UI.</p>
+          <div class="col-12 overview-card">
+            <div class="overview-header">
+              <h3>Today's shows</h3>
+              <button type="button" id="refreshTodayShows" class="btn ghost small-btn" hidden>Refresh</button>
+            </div>
+            <div id="todayShowList" class="today-show-list" role="list"></div>
           </div>
-          <fieldset class="col-12 provider-fields data-tools">
-            <legend>Data tools</legend>
-            <p class="help">Refresh the show list to pull the latest records.</p>
-            <button id="refreshShows" type="button" class="btn ghost">Refresh data</button>
-          </fieldset>
-          <fieldset id="webhookFields" class="col-12 provider-fields">
-            <legend>Webhook export</legend>
-            <label class="switch">
-              <input id="webhookEnabled" type="checkbox" />
-              <span>Enable per-entry webhook dispatch</span>
-            </label>
-            <p class="help">Send each recorded entry to an external endpoint using the same columns as the CSV export.</p>
-            <button id="webhookConfigure" type="button" class="btn ghost" hidden>Config webhook</button>
-            <button id="webhookSimulateMonth" type="button" class="btn ghost">Simulate month delivery</button>
-            <p class="help small">Replay the most recent month of shows to the webhook for validation.</p>
-          </fieldset>
         </section>
-        <div class="config-actions row">
-          <div class="grow"></div>
-          <button type="button" id="cancelConfig" class="btn ghost">Cancel</button>
-          <button type="submit" class="btn primary">Save settings</button>
-        </div>
-        <div class="config-status">
-          <div id="configMessage" role="status" aria-live="polite" class="help"></div>
-        </div>
-      </form>
+        <section id="configUser" class="config-section grid" data-config-section="user" aria-hidden="true">
+          <div class="col-12">
+            <h3>User settings</h3>
+            <p class="help">Update your password to keep your account secure.</p>
+          </div>
+          <form id="userSettingsForm" class="config-form col-12">
+            <label for="userCurrentPassword">Current password</label>
+            <input id="userCurrentPassword" type="password" autocomplete="current-password" required />
+            <label for="userNewPassword">New password</label>
+            <input id="userNewPassword" type="password" autocomplete="new-password" minlength="8" required />
+            <label for="userConfirmPassword">Confirm new password</label>
+            <input id="userConfirmPassword" type="password" autocomplete="new-password" minlength="8" required />
+            <div class="config-actions row">
+              <div class="grow"></div>
+              <button type="submit" class="btn primary">Update password</button>
+            </div>
+          </form>
+          <div class="config-status col-12">
+            <div id="userSettingsMessage" role="status" aria-live="polite" class="help" hidden></div>
+          </div>
+        </section>
+        <section id="configAdmin" class="config-section grid" data-config-section="admin" aria-hidden="true">
+          <div class="col-12">
+            <h3>System administration</h3>
+            <p class="help">Manage workspace settings and integrations.</p>
+          </div>
+          <form id="configForm" class="config-form col-12">
+            <div class="grid admin-settings-grid">
+              <fieldset id="staffFields" class="col-12 provider-fields">
+                <legend>Pilots, monkey leads &amp; crew</legend>
+                <p class="help">Add one name per line. These lists feed the Lead and Pilot workspaces.</p>
+                <label for="pilotList">Pilots</label>
+                <textarea id="pilotList" class="list-input" placeholder="e.g., Alex"></textarea>
+                <label for="monkeyLeadList">Monkey leads</label>
+                <textarea id="monkeyLeadList" class="list-input" placeholder="e.g., Cleo"></textarea>
+                <label for="crewList">Crew</label>
+                <textarea id="crewList" class="list-input" placeholder="e.g., Jamie"></textarea>
+              </fieldset>
+              <div class="col-12">
+                <label for="unitLabelSelect">Unit label</label>
+                <select id="unitLabelSelect" name="unitLabel">
+                  <option value="Drone">Drone</option>
+                  <option value="Monkey">Monkey</option>
+                </select>
+                <p class="help">Controls how units are referenced across the UI.</p>
+              </div>
+              <fieldset class="col-12 provider-fields data-tools">
+                <legend>Data tools</legend>
+                <p class="help">Refresh the show list to pull the latest records.</p>
+                <button id="refreshShows" type="button" class="btn ghost">Refresh data</button>
+              </fieldset>
+              <fieldset id="webhookFields" class="col-12 provider-fields">
+                <legend>Webhook export</legend>
+                <label class="switch">
+                  <input id="webhookEnabled" type="checkbox" />
+                  <span>Enable per-entry webhook dispatch</span>
+                </label>
+                <p class="help">Send each recorded entry to an external endpoint using the same columns as the CSV export.</p>
+                <button id="webhookConfigure" type="button" class="btn ghost" hidden>Config webhook</button>
+                <button id="webhookSimulateMonth" type="button" class="btn ghost">Simulate month delivery</button>
+                <p class="help small">Replay the most recent month of shows to the webhook for validation.</p>
+              </fieldset>
+            </div>
+            <div class="config-actions row">
+              <div class="grow"></div>
+              <button type="button" id="cancelConfig" class="btn ghost">Cancel</button>
+              <button type="submit" class="btn primary">Save settings</button>
+            </div>
+            <div class="config-status">
+              <div id="configMessage" role="status" aria-live="polite" class="help"></div>
+            </div>
+          </form>
+        </section>
+      </div>
     </aside>
 
     <div id="appMain" class="app-main">
@@ -89,6 +127,10 @@
           </button>
           <div class="topbar-actions">
             <button id="roleHome" class="btn ghost" type="button">← Choose workspace</button>
+            <div id="sessionChip" class="session-chip" hidden>
+              <span id="sessionChipName" class="session-chip-name"></span>
+              <span id="sessionChipRoles" class="session-chip-roles"></span>
+            </div>
           </div>
           <img src="./assets/Sphere%20Logo_RGB%20_White.png" alt="Sphere" class="app-logo" />
           <div class="topbar-title">
@@ -102,6 +144,21 @@
       </div>
 
       <div class="container" role="main">
+    <section id="loginView" class="panel login-panel view-login-only" aria-labelledby="loginTitle">
+      <form id="loginForm" class="login-card">
+        <h2 id="loginTitle">Sign in</h2>
+        <p class="lead">Access the Monkey Tracker workspaces.</p>
+        <label for="loginEmail">Email</label>
+        <input id="loginEmail" type="email" autocomplete="username" required />
+        <label for="loginPassword">Password</label>
+        <input id="loginPassword" type="password" autocomplete="current-password" required />
+        <div class="row login-actions">
+          <div class="grow"></div>
+          <button type="submit" id="loginSubmit" class="btn primary">Sign in</button>
+        </div>
+        <div id="loginMessage" class="error" role="alert" hidden></div>
+      </form>
+    </section>
     <section id="landingView" class="panel landing-panel view-landing-only" aria-labelledby="landingTitle">
       <h2 id="landingTitle">Choose workspace</h2>
       <p class="lead">Select the role you need for this session.</p>

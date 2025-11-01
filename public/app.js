@@ -4744,6 +4744,9 @@ function toNumber(value){
 
 async function apiRequest(url, options){
   const opts = options || {};
+  if(!Object.prototype.hasOwnProperty.call(opts, 'credentials')){
+    opts.credentials = 'include';
+  }
   if(opts.body && typeof opts.body !== 'string'){
     opts.body = JSON.stringify(opts.body);
   }

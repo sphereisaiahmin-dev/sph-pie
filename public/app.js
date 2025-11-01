@@ -114,7 +114,7 @@ const state = {
   unitLabel: 'Drone',
   shows: [],
   currentShowId: null,
-  currentView: 'landing',
+  currentView: 'login',
   editingEntryRef: null,
   serverHost: '10.241.211.120',
   serverPort: 3000,

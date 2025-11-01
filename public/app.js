@@ -123,6 +123,7 @@ const state = {
   session: null,
   sessionInfo: null,
   sessionLoading: false,
+  hasShownPasswordChangePrompt: false,
   userDirectory: [],
   newShowDraft: createEmptyShowDraft(),
   showHeaderShowErrors: false,
@@ -510,14 +511,17 @@ async function bootstrapSession(){
     const data = await apiRequest('/api/session', {method: 'GET'});
     state.session = data?.user || null;
     state.sessionInfo = data?.session || null;
+    state.hasShownPasswordChangePrompt = false;
   }catch(err){
     if(err && err.status === 401){
       state.session = null;
       state.sessionInfo = null;
+      state.hasShownPasswordChangePrompt = false;
     }else{
       console.error('Failed to fetch session', err);
       state.session = null;
       state.sessionInfo = null;
+      state.hasShownPasswordChangePrompt = false;
       toast('Unable to verify session', true);
     }
   }finally{
@@ -548,12 +552,31 @@ async function initialiseForSession(){
     updateTodayShowSummary();
     setUserSettingsMessage('');
     updateAuthVisibility();
+    maybePromptPasswordChange();
   }catch(err){
     console.error('Failed to initialise workspace data', err);
     toast('Failed to load workspace data', true);
   }finally{
     state.sessionLoading = false;
   }
+}
+
+function maybePromptPasswordChange(options = {}){
+  const opts = options || {};
+  const mustChange = Boolean(state.session?.mustChangePassword);
+  document.body.classList.toggle('requires-password-change', mustChange);
+  if(!mustChange){
+    state.hasShownPasswordChangePrompt = false;
+    return;
+  }
+  if(!opts.force && state.hasShownPasswordChangePrompt){
+    return;
+  }
+  state.hasShownPasswordChangePrompt = true;
+  setConfigSection('user');
+  toggleConfig(true);
+  setUserSettingsMessage('Update your password to replace the default password.', true);
+  toast('Update your password to replace the default password.', true);
 }
 
 async function loadConfig(){
@@ -750,6 +773,7 @@ async function onLoginSubmit(event){
     });
     state.session = data?.user || null;
     state.sessionInfo = data?.session || null;
+    state.hasShownPasswordChangePrompt = false;
     if(loginForm){
       loginForm.reset();
     }
@@ -759,10 +783,12 @@ async function onLoginSubmit(event){
     await initialiseForSession();
   }catch(err){
     console.error('Login failed', err);
+    const message = err && err.status === 401 ? 'Incorrect email or password.' : (err.message || 'Failed to sign in');
     if(loginMessage){
-      loginMessage.textContent = err.message || 'Failed to sign in';
+      loginMessage.textContent = message;
       loginMessage.hidden = false;
     }
+    toast(message, true);
   }finally{
     if(loginSubmitBtn){
       loginSubmitBtn.disabled = false;
@@ -793,10 +819,12 @@ async function onLogout(){
   state.currentShowId = null;
   state.archivedShows = [];
   state.currentArchivedShowId = null;
+  state.hasShownPasswordChangePrompt = false;
   updateSessionOverview();
   updateTodayShowSummary();
   setUserSettingsMessage('');
   updateAuthVisibility();
+  maybePromptPasswordChange({force: true});
   setView('login');
   toast('Signed out');
 }
@@ -825,10 +853,18 @@ async function onUserSettingsSubmit(event){
     submitBtn.textContent = 'Updating…';
   }
   try{
-    await apiRequest('/api/auth/change-password', {
+    const response = await apiRequest('/api/auth/change-password', {
       method: 'POST',
       body: {currentPassword, newPassword}
     });
+    const updatedUser = response?.user || null;
+    if(updatedUser){
+      state.session = updatedUser;
+      state.hasShownPasswordChangePrompt = false;
+      updateSessionOverview();
+      updateAuthVisibility();
+      maybePromptPasswordChange({force: true});
+    }
     if(userSettingsForm){
       userSettingsForm.reset();
     }
@@ -884,19 +920,28 @@ function updateSessionOverview(){
   }
   if(sessionOverviewMessage){
     if(user){
+      const mustChange = Boolean(user.mustChangePassword);
       const expiresAt = toNumber(state.sessionInfo?.expiresAt);
       const createdAt = toNumber(state.sessionInfo?.createdAt);
-      if(Number.isFinite(expiresAt)){
-        sessionOverviewMessage.textContent = `Session expires ${formatDateTime(expiresAt)}.`;
-      }else if(Number.isFinite(createdAt)){
-        sessionOverviewMessage.textContent = `Signed in ${formatDateTime(createdAt)}.`;
+      if(mustChange){
+        sessionOverviewMessage.textContent = 'Default password in use. Please update it now.';
       }else{
-        sessionOverviewMessage.textContent = 'Session active.';
+        if(Number.isFinite(expiresAt)){
+          sessionOverviewMessage.textContent = `Session expires ${formatDateTime(expiresAt)}.`;
+        }else if(Number.isFinite(createdAt)){
+          sessionOverviewMessage.textContent = `Signed in ${formatDateTime(createdAt)}.`;
+        }else{
+          sessionOverviewMessage.textContent = 'Session active.';
+        }
       }
       sessionOverviewMessage.hidden = false;
+      sessionOverviewMessage.classList.toggle('warn', mustChange);
+      sessionOverviewMessage.classList.remove('error');
     }else{
       sessionOverviewMessage.textContent = 'Sign in to access workspace tools.';
       sessionOverviewMessage.hidden = false;
+      sessionOverviewMessage.classList.remove('warn');
+      sessionOverviewMessage.classList.remove('error');
     }
   }
   if(sessionChip){
@@ -1042,12 +1087,14 @@ function handleUnauthorized(message){
   state.currentShowId = null;
   state.archivedShows = [];
   state.currentArchivedShowId = null;
+  state.hasShownPasswordChangePrompt = false;
   if(hadSession){
     toast(message || 'Session expired. Please sign in again.', true);
   }
   updateSessionOverview();
   updateTodayShowSummary();
   updateAuthVisibility();
+  maybePromptPasswordChange({force: true});
   setView('login');
 }
 

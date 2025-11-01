@@ -12,6 +12,7 @@ function sanitizeUser(user){
   }else{
     rest.roles = [];
   }
+  rest.mustChangePassword = Boolean(rest.mustChangePassword);
   return rest;
 }
 
@@ -69,7 +70,7 @@ function ensureValidRoles(roles){
   return normalized;
 }
 
-async function createUser({name, email, password, roles, isActive = true}){
+async function createUser({name, email, password, roles, isActive = true, mustChangePassword = false}){
   if(typeof name !== 'string' || !name.trim()){
     const err = new Error('Name is required');
     err.status = 400;
@@ -97,7 +98,8 @@ async function createUser({name, email, password, roles, isActive = true}){
     email: email.trim().toLowerCase(),
     passwordHash,
     roles: normalizedRoles,
-    isActive: Boolean(isActive)
+    isActive: Boolean(isActive),
+    mustChangePassword: Boolean(mustChangePassword)
   });
   return sanitizeUser(created);
 }
@@ -140,11 +142,14 @@ async function updateUser(id, updates){
   if(updates.roles !== undefined){
     payload.roles = ensureValidRoles(updates.roles);
   }
+  if(updates.mustChangePassword !== undefined){
+    payload.mustChangePassword = Boolean(updates.mustChangePassword);
+  }
   const updated = await provider.updateUser(id, payload);
   return sanitizeUser(updated);
 }
 
-async function setUserPassword(id, password){
+async function setUserPassword(id, password, options = {}){
   const provider = getProvider();
   const existing = await provider.getUser(id);
   if(!existing){
@@ -153,7 +158,8 @@ async function setUserPassword(id, password){
     throw err;
   }
   const passwordHash = await hashPassword(password);
-  const updated = await provider.setUserPassword(id, passwordHash);
+  const opts = options || {};
+  const updated = await provider.setUserPassword(id, passwordHash, {requireChange: Boolean(opts.requireChange)});
   return sanitizeUser(updated);
 }
 
@@ -177,7 +183,7 @@ async function changePassword(id, currentPassword, nextPassword){
     throw err;
   }
   const passwordHash = await hashPassword(nextPassword);
-  const updated = await provider.setUserPassword(id, passwordHash);
+  const updated = await provider.setUserPassword(id, passwordHash, {requireChange: false});
   return sanitizeUser(updated);
 }
 

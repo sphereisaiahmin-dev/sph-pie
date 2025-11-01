@@ -21,7 +21,7 @@ async function bootstrap(){
   let boundHost = envHost || configuredHost;
   let serverInstance = null;
   await initProvider(config);
-  const defaultSeedPassword = process.env.MONKEY_TRACKER_SEED_PASSWORD || process.env.SEED_USER_PASSWORD || 'sphere';
+  const defaultSeedPassword = process.env.MONKEY_TRACKER_SEED_PASSWORD || process.env.SEED_USER_PASSWORD || 'sphereops!2024';
   await seedDefaultUsers({defaultPassword: defaultSeedPassword});
   await setWebhookConfig(config.webhook);
 

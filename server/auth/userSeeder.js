@@ -25,7 +25,8 @@ async function seedDefaultUsers({defaultPassword} = {}){
       if(needsRoleUpdate){
         await provider.updateUser(existing.id, {roles: mergedRoles});
       }
-      if(passwordHash && !existing.passwordHash){
+      const shouldResetPassword = Boolean(passwordHash) && (!existing.passwordHash || existing.mustChangePassword);
+      if(shouldResetPassword){
         await provider.setUserPassword(existing.id, passwordHash, {requireChange});
       }
       continue;

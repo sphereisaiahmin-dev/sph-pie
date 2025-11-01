@@ -3,11 +3,47 @@ const { v4: uuidv4 } = require('uuid');
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
 const ARCHIVE_RETENTION_MONTHS = 2;
-const DEFAULT_PILOTS = ['Alex','Nick','John Henery','James','Robert','Nazar'];
-const DEFAULT_CREW = ['Alex','Nick','John Henery','James','Robert','Nazar'];
-const DEFAULT_MONKEY_LEADS = ['Cleo','Bret','Leslie','Dallas'];
+const VALID_ROLES = ['admin', 'lead', 'operator', 'crew'];
 
 const IDENTIFIER_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function normalizeRole(role){
+  if(typeof role !== 'string'){
+    return null;
+  }
+  const trimmed = role.trim().toLowerCase();
+  if(!trimmed){
+    return null;
+  }
+  if(trimmed === 'pilot' || trimmed === 'pilots'){
+    return 'operator';
+  }
+  if(trimmed === 'monkeylead' || trimmed === 'monkey_lead' || trimmed === 'monkey-lead'){
+    return 'crew';
+  }
+  if(trimmed === 'leadpilot' || trimmed === 'lead_pilot' || trimmed === 'lead-pilot' || trimmed === 'leads'){
+    return 'lead';
+  }
+  if(VALID_ROLES.includes(trimmed)){
+    return trimmed;
+  }
+  return null;
+}
+
+function normalizeRoles(input){
+  const values = Array.isArray(input) ? input : [input];
+  const normalized = [];
+  values.forEach(value =>{
+    const role = normalizeRole(value);
+    if(!role){
+      return;
+    }
+    if(!normalized.includes(role)){
+      normalized.push(role);
+    }
+  });
+  return normalized;
+}
 
 class PostgresProvider {
   constructor(config = {}){
@@ -31,7 +67,6 @@ class PostgresProvider {
     }
 
     await this._ensureSchema();
-    await this._seedDefaultStaff();
     await this._refreshArchive();
   }
 
@@ -264,54 +299,217 @@ class PostgresProvider {
   }
 
   async getStaff(){
+    const users = await this.listUsers();
+    const crew = [];
+    const pilots = [];
+    const crewLeads = [];
+    users.forEach(user =>{
+      if(!user || typeof user !== 'object'){
+        return;
+      }
+      const roles = Array.isArray(user.roles) ? user.roles : [];
+      if(roles.includes('crew')){
+        crew.push(user.name);
+        crewLeads.push(user.name);
+      }
+      if(roles.includes('operator')){
+        pilots.push(user.name);
+      }
+    });
+    crew.sort((a, b) => a.localeCompare(b));
+    pilots.sort((a, b) => a.localeCompare(b));
+    crewLeads.sort((a, b) => a.localeCompare(b));
     return {
-      crew: await this._listStaffByRole('crew'),
-      pilots: await this._listStaffByRole('pilot'),
-      monkeyLeads: await this._listMonkeyLeads()
+      crew,
+      pilots,
+      monkeyLeads: crewLeads,
+      users: users.map(user => ({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        roles: Array.isArray(user.roles) ? [...user.roles] : [],
+        isActive: user.isActive
+      }))
     };
   }
 
   async replaceStaff(staff = {}){
-    const crew = this._normalizeNameList(staff.crew || [], {sort: true});
-    const pilots = this._normalizeNameList(staff.pilots || [], {sort: true});
-    const monkeyLeads = this._normalizeNameList(staff.monkeyLeads || [], {sort: true});
-    await this._withClient(async client =>{
-      await this._replaceStaffRole('crew', crew, client);
-      await this._replaceStaffRole('pilot', pilots, client);
-      await this._replaceMonkeyLeads(monkeyLeads, client);
-    });
-    return {crew, pilots, monkeyLeads};
+    const err = new Error('Legacy staff management is deprecated. Use /api/users to manage accounts.');
+    err.status = 410;
+    throw err;
+  }
+
+  async listUsers(){
+    const usersTable = this._table('users');
+    const userRolesTable = this._table('user_roles');
+    const rows = await this._select(`
+      SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at, u.updated_at,
+             ARRAY_REMOVE(ARRAY_AGG(r.role), NULL) AS roles
+      FROM ${usersTable} u
+      LEFT JOIN ${userRolesTable} r ON r.user_id = u.id
+      GROUP BY u.id
+      ORDER BY LOWER(u.name)
+    `);
+    return rows.map(row => this._mapUserRow(row));
+  }
+
+  async getUser(id){
+    if(!id){
+      return null;
+    }
+    const usersTable = this._table('users');
+    const userRolesTable = this._table('user_roles');
+    const row = await this._selectOne(`
+      SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at, u.updated_at,
+             ARRAY_REMOVE(ARRAY_AGG(r.role), NULL) AS roles
+      FROM ${usersTable} u
+      LEFT JOIN ${userRolesTable} r ON r.user_id = u.id
+      WHERE u.id = $1
+      GROUP BY u.id
+    `, [id]);
+    return row ? this._mapUserRow(row) : null;
+  }
+
+  async getUserByEmail(email){
+    if(typeof email !== 'string' || !email.trim()){
+      return null;
+    }
+    const normalized = email.trim().toLowerCase();
+    const usersTable = this._table('users');
+    const userRolesTable = this._table('user_roles');
+    const row = await this._selectOne(`
+      SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at, u.updated_at,
+             ARRAY_REMOVE(ARRAY_AGG(r.role), NULL) AS roles
+      FROM ${usersTable} u
+      LEFT JOIN ${userRolesTable} r ON r.user_id = u.id
+      WHERE LOWER(u.email) = LOWER($1)
+      GROUP BY u.id
+    `, [normalized]);
+    return row ? this._mapUserRow(row) : null;
+  }
+
+  async createUser({name, email, passwordHash = null, roles = [], isActive = true}){
+    const usersTable = this._table('users');
+    const now = new Date();
+    const id = uuidv4();
+    const normalizedRoles = this._normalizeRoles(roles);
+    await this._run(`
+      INSERT INTO ${usersTable} (id, name, email, password_hash, is_active, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $6)
+    `, [id, name, email, passwordHash, isActive ? true : false, now]);
+    await this._replaceUserRoles(id, normalizedRoles, now);
+    return this.getUser(id);
+  }
+
+  async updateUser(id, updates = {}){
+    const existing = await this.getUser(id);
+    if(!existing){
+      return null;
+    }
+    const fields = [];
+    const params = [];
+    let paramIndex = 1;
+    let touched = false;
+    if(updates.name !== undefined){
+      fields.push(`name = $${paramIndex += 1}`);
+      params.push(updates.name);
+    }
+    if(updates.email !== undefined){
+      fields.push(`email = $${paramIndex += 1}`);
+      params.push(updates.email);
+    }
+    if(updates.isActive !== undefined){
+      fields.push(`is_active = $${paramIndex += 1}`);
+      params.push(updates.isActive ? true : false);
+    }
+    const now = new Date();
+    if(fields.length){
+      fields.push(`updated_at = $${paramIndex += 1}`);
+      params.push(now);
+      params.unshift(id);
+      await this._run(`UPDATE ${this._table('users')} SET ${fields.join(', ')} WHERE id = $1`, params);
+      touched = true;
+    }
+    if(updates.roles !== undefined){
+      const normalizedRoles = this._normalizeRoles(updates.roles);
+      await this._replaceUserRoles(id, normalizedRoles, now);
+      touched = true;
+    }
+    if(touched && !fields.length){
+      await this._run(`UPDATE ${this._table('users')} SET updated_at = $2 WHERE id = $1`, [id, now]);
+    }
+    return this.getUser(id);
+  }
+
+  async setUserPassword(id, passwordHash){
+    const now = new Date();
+    await this._run(`UPDATE ${this._table('users')} SET password_hash = $2, updated_at = $3 WHERE id = $1`, [id, passwordHash, now]);
+    return this.getUser(id);
   }
 
   _assertRequiredShowFields(raw = {}){
-    const required = [
-      {key: 'date', label: 'Date'},
-      {key: 'time', label: 'Show start time'},
-      {key: 'label', label: 'Show label'},
-      {key: 'leadPilot', label: 'Lead pilot'},
-      {key: 'monkeyLead', label: 'Monkey lead'}
-    ];
-    required.forEach(field =>{
-      const value = typeof raw[field.key] === 'string' ? raw[field.key].trim() : '';
-      if(!value){
-        const err = new Error(`${field.label} is required`);
-        err.status = 400;
-        throw err;
-      }
-    });
+    const date = typeof raw.date === 'string' ? raw.date.trim() : '';
+    if(!date){
+      const err = new Error('Date is required');
+      err.status = 400;
+      throw err;
+    }
+    const time = typeof raw.time === 'string' ? raw.time.trim() : '';
+    if(!time){
+      const err = new Error('Show start time is required');
+      err.status = 400;
+      throw err;
+    }
+    const label = typeof raw.label === 'string' ? raw.label.trim() : '';
+    if(!label){
+      const err = new Error('Show label is required');
+      err.status = 400;
+      throw err;
+    }
+    const leadName = this._extractAssignmentName(raw.lead ?? raw.leadPilot, 'lead');
+    if(!leadName){
+      const err = new Error('Lead assignment is required');
+      err.status = 400;
+      throw err;
+    }
+    const crewLeadName = this._extractAssignmentName(raw.crewLead ?? raw.monkeyLead, 'crew');
+    if(!crewLeadName){
+      const err = new Error('Crew lead assignment is required');
+      err.status = 400;
+      throw err;
+    }
   }
 
   _normalizeShow(raw){
     const createdAt = typeof raw.createdAt === 'number' ? raw.createdAt : Number(raw.createdAt);
     const updatedAt = typeof raw.updatedAt === 'number' ? raw.updatedAt : Number(raw.updatedAt);
+    const leadAssignment = this._normalizeUserAssignment(raw.lead !== undefined ? raw.lead : raw.leadPilot, 'lead');
+    const crewLeadAssignment = this._normalizeUserAssignment(raw.crewLead !== undefined ? raw.crewLead : raw.monkeyLead, 'crew');
+    const crewSource = raw.crewAssignments !== undefined ? raw.crewAssignments : raw.crew;
+    const crewAssignments = this._normalizeAssignmentList(crewSource, 'crew');
+    crewAssignments.sort((a, b)=>{
+      const aName = (a.displayName || '').toLowerCase();
+      const bName = (b.displayName || '').toLowerCase();
+      if(aName < bName){
+        return -1;
+      }
+      if(aName > bName){
+        return 1;
+      }
+      return 0;
+    });
+    const crewNames = crewAssignments.map(item => item.displayName).filter(Boolean);
     return {
       id: raw.id,
       date: typeof raw.date === 'string' ? raw.date.trim() : '',
       time: typeof raw.time === 'string' ? raw.time.trim() : '',
       label: typeof raw.label === 'string' ? raw.label.trim() : '',
-      crew: Array.isArray(raw.crew) ? this._normalizeNameList(raw.crew, {sort: true}) : [],
-      leadPilot: typeof raw.leadPilot === 'string' ? raw.leadPilot.trim() : '',
-      monkeyLead: typeof raw.monkeyLead === 'string' ? raw.monkeyLead.trim() : '',
+      lead: leadAssignment,
+      crewLead: crewLeadAssignment,
+      crewAssignments,
+      crew: crewNames,
+      leadPilot: leadAssignment.displayName,
+      monkeyLead: crewLeadAssignment.displayName,
       notes: typeof raw.notes === 'string' ? raw.notes.trim() : '',
       entries: Array.isArray(raw.entries) ? raw.entries.map(e => this._normalizeEntry(e)) : [],
       createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
@@ -321,6 +519,28 @@ class PostgresProvider {
 
   _normalizeEntry(raw){
     const ts = typeof raw.ts === 'number' ? raw.ts : Number(raw.ts);
+    const operatorSource = raw.assignedOperator !== undefined ? raw.assignedOperator
+      : (raw.operator && typeof raw.operator === 'object' ? raw.operator : null);
+    const operatorAssignment = this._normalizeUserAssignment(operatorSource, 'operator');
+    let operatorName = typeof raw.operatorName === 'string' ? raw.operatorName.trim() : '';
+    if(!operatorName && typeof raw.operator === 'string'){
+      operatorName = raw.operator.trim();
+    }
+    if(!operatorName){
+      operatorName = operatorAssignment.displayName;
+    }
+    let operatorId = typeof raw.operatorId === 'string' ? raw.operatorId.trim() : '';
+    if(!operatorId){
+      operatorId = operatorAssignment.userId || '';
+    }
+    const operatorRoles = operatorAssignment.roles && operatorAssignment.roles.length
+      ? operatorAssignment.roles
+      : ['operator'];
+    const assignedOperator = {
+      ...operatorAssignment,
+      displayName: operatorName || operatorAssignment.displayName,
+      roles: operatorRoles
+    };
     return {
       id: raw.id || uuidv4(),
       ts: Number.isFinite(ts) ? ts : Date.now(),
@@ -334,7 +554,11 @@ class PostgresProvider {
       severity: typeof raw.severity === 'string' ? raw.severity.trim() : '',
       rootCause: typeof raw.rootCause === 'string' ? raw.rootCause.trim() : '',
       actions: Array.isArray(raw.actions) ? this._normalizeNameList(raw.actions) : [],
-      operator: typeof raw.operator === 'string' ? raw.operator.trim() : '',
+      operator: operatorName,
+      operatorName,
+      operatorId: operatorId || null,
+      operatorRoles,
+      assignedOperator,
       batteryId: typeof raw.batteryId === 'string' ? raw.batteryId.trim() : '',
       delaySec: raw.delaySec === null || raw.delaySec === undefined || raw.delaySec === ''
         ? null
@@ -371,8 +595,9 @@ class PostgresProvider {
     if(!show){
       return;
     }
-    const normalized = (entry.operator || '').trim().toLowerCase();
-    if(!normalized){
+    const normalizedId = typeof entry.operatorId === 'string' ? entry.operatorId.trim().toLowerCase() : '';
+    const normalizedName = (entry.operatorName || entry.operator || '').trim().toLowerCase();
+    if(!normalizedId && !normalizedName){
       return;
     }
     const hasDuplicate = (show.entries || []).some(existing => {
@@ -382,11 +607,18 @@ class PostgresProvider {
       if(existing.id === entry.id){
         return false;
       }
-      const existingPilot = (existing.operator || '').trim().toLowerCase();
-      return existingPilot === normalized;
+      const existingId = typeof existing.operatorId === 'string' ? existing.operatorId.trim().toLowerCase() : '';
+      if(normalizedId && existingId && existingId === normalizedId){
+        return true;
+      }
+      const existingName = (existing.operatorName || existing.operator || '').trim().toLowerCase();
+      if(normalizedName && existingName && existingName === normalizedName){
+        return true;
+      }
+      return false;
     });
     if(hasDuplicate){
-      const err = new Error('Pilot already has an entry for this show.');
+      const err = new Error('Operator already has an entry for this show.');
       err.status = 400;
       throw err;
     }
@@ -394,29 +626,16 @@ class PostgresProvider {
 
   async _ensureSchema(){
     const showsTable = this._table('shows');
-    const staffTable = this._table('staff');
-    const monkeyTable = this._table('monkey_leads');
     const archiveTable = this._table('show_archive');
+    const usersTable = this._table('users');
+    const userRolesTable = this._table('user_roles');
+    const legacyStaffTable = this._table('staff');
+    const legacyMonkeyTable = this._table('monkey_leads');
     await this._run(`
       CREATE TABLE IF NOT EXISTS ${showsTable} (
         id UUID PRIMARY KEY,
         data JSONB NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL
-      )
-    `);
-    await this._run(`
-      CREATE TABLE IF NOT EXISTS ${staffTable} (
-        id UUID PRIMARY KEY,
-        name TEXT NOT NULL,
-        role TEXT NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL
-      )
-    `);
-    await this._run(`
-      CREATE TABLE IF NOT EXISTS ${monkeyTable} (
-        id UUID PRIMARY KEY,
-        name TEXT NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL
       )
     `);
     await this._run(`
@@ -429,59 +648,44 @@ class PostgresProvider {
         deleted_at TIMESTAMPTZ
       )
     `);
+    await this._run(`
+      CREATE TABLE IF NOT EXISTS ${usersTable} (
+        id UUID PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+      )
+    `);
+    await this._run(`
+      CREATE TABLE IF NOT EXISTS ${userRolesTable} (
+        user_id UUID NOT NULL REFERENCES ${usersTable}(id) ON DELETE CASCADE,
+        role TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (user_id, role)
+      )
+    `);
+    await this._run(`CREATE UNIQUE INDEX IF NOT EXISTS ${this._indexName('users_email_unique')} ON ${usersTable} (LOWER(email))`);
+    await this._run(`CREATE INDEX IF NOT EXISTS ${this._indexName('user_roles_role_idx')} ON ${userRolesTable} (role)`);
+    // Legacy tables retained for backward compatibility with deployments that still reference them
+    await this._run(`
+      CREATE TABLE IF NOT EXISTS ${legacyStaffTable} (
+        id UUID PRIMARY KEY,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL
+      )
+    `);
+    await this._run(`
+      CREATE TABLE IF NOT EXISTS ${legacyMonkeyTable} (
+        id UUID PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL
+      )
+    `);
     await this._run(`CREATE INDEX IF NOT EXISTS ${this._indexName('show_archive_archived_at_idx')} ON ${archiveTable} (archived_at DESC)`);
-    await this._run(`CREATE INDEX IF NOT EXISTS ${this._indexName('staff_role_name_idx')} ON ${staffTable} (role, name)`);
-  }
-
-  async _seedDefaultStaff(){
-    let mutated = false;
-    if((await this._listStaffByRole('pilot')).length === 0){
-      await this._replaceStaffRole('pilot', this._normalizeNameList(DEFAULT_PILOTS, {sort: true}));
-      mutated = true;
-    }
-    if((await this._listStaffByRole('crew')).length === 0){
-      await this._replaceStaffRole('crew', this._normalizeNameList(DEFAULT_CREW, {sort: true}));
-      mutated = true;
-    }
-    if((await this._listMonkeyLeads()).length === 0){
-      await this._replaceMonkeyLeads(this._normalizeNameList(DEFAULT_MONKEY_LEADS, {sort: true}));
-      mutated = true;
-    }
-    return mutated;
-  }
-
-  async _listStaffByRole(role){
-    const rows = await this._select(`SELECT name FROM ${this._table('staff')} WHERE role = $1 ORDER BY lower(name), name`, [role]);
-    return rows.map(row => row.name);
-  }
-
-  async _listMonkeyLeads(){
-    const rows = await this._select(`SELECT name FROM ${this._table('monkey_leads')} ORDER BY lower(name), name`);
-    return rows.map(row => row.name);
-  }
-
-  async _replaceStaffRole(role, names, client = null){
-    const executor = client || this.pool;
-    await executor.query(`DELETE FROM ${this._table('staff')} WHERE role = $1`, [role]);
-    if(!Array.isArray(names) || names.length === 0){
-      return;
-    }
-    const timestamp = new Date();
-    for(const name of names){
-      await executor.query(`INSERT INTO ${this._table('staff')} (id, name, role, created_at) VALUES ($1, $2, $3, $4)`, [uuidv4(), name, role, timestamp]);
-    }
-  }
-
-  async _replaceMonkeyLeads(names, client = null){
-    const executor = client || this.pool;
-    await executor.query(`DELETE FROM ${this._table('monkey_leads')}`);
-    if(!Array.isArray(names) || names.length === 0){
-      return;
-    }
-    const timestamp = new Date();
-    for(const name of names){
-      await executor.query(`INSERT INTO ${this._table('monkey_leads')} (id, name, created_at) VALUES ($1, $2, $3)`, [uuidv4(), name, timestamp]);
-    }
   }
 
   async _persist(show, client = null){
@@ -648,6 +852,134 @@ class PostgresProvider {
       show.crew = [];
     }
     return show;
+  }
+
+  async _replaceUserRoles(userId, roles = [], timestamp = new Date()){
+    if(!userId){
+      return;
+    }
+    const userRolesTable = this._table('user_roles');
+    await this._run(`DELETE FROM ${userRolesTable} WHERE user_id = $1`, [userId]);
+    const normalized = this._normalizeRoles(roles);
+    for(const role of normalized){
+      await this._run(`INSERT INTO ${userRolesTable} (user_id, role, created_at) VALUES ($1, $2, $3)`, [userId, role, timestamp]);
+    }
+  }
+
+  _mapUserRow(row){
+    if(!row){
+      return null;
+    }
+    const roleList = Array.isArray(row.roles) ? row.roles : (typeof row.roles === 'string' ? row.roles.split(',') : []);
+    const normalizedRoles = normalizeRoles(roleList);
+    return {
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      passwordHash: row.password_hash || null,
+      isActive: row.is_active === true || row.is_active === 1 || row.is_active === '1',
+      createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+      updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : (row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString()),
+      roles: Array.from(new Set(normalizedRoles))
+    };
+  }
+
+  _normalizeRoles(roles){
+    const normalized = normalizeRoles(roles);
+    const filtered = normalized.filter(role => VALID_ROLES.includes(role));
+    if(filtered.length === 0){
+      throw new Error('At least one valid role is required.');
+    }
+    return filtered;
+  }
+
+  _normalizeDisplayName(value){
+    if(typeof value === 'string'){
+      return value.trim();
+    }
+    return '';
+  }
+
+  _normalizeUserAssignment(raw, defaultRole = null){
+    const roles = [];
+    if(defaultRole){
+      roles.push(defaultRole);
+    }
+    let userId = null;
+    let email = null;
+    let displayName = '';
+    if(typeof raw === 'string'){
+      displayName = this._normalizeDisplayName(raw);
+    }else if(raw && typeof raw === 'object'){
+      if(typeof raw.userId === 'string' && raw.userId.trim()){
+        userId = raw.userId.trim();
+      }else if(typeof raw.id === 'string' && raw.id.trim()){
+        userId = raw.id.trim();
+      }
+      if(typeof raw.email === 'string' && raw.email.trim()){
+        email = raw.email.trim();
+      }
+      const candidateNames = [raw.displayName, raw.name, raw.fullName, raw.label, raw.monkeyLead];
+      for(const candidate of candidateNames){
+        const normalizedName = this._normalizeDisplayName(candidate);
+        if(normalizedName){
+          displayName = normalizedName;
+          break;
+        }
+      }
+      if(!displayName && raw && typeof raw.toString === 'function'){
+        const fallback = this._normalizeDisplayName(raw.toString());
+        if(fallback && fallback !== '[object Object]'){
+          displayName = fallback;
+        }
+      }
+      if(Array.isArray(raw.roles)){
+        roles.push(...raw.roles);
+      }
+      if(typeof raw.role === 'string'){
+        roles.push(raw.role);
+      }
+    }
+    const normalizedRoles = normalizeRoles(roles);
+    const finalRoles = normalizedRoles.length ? normalizedRoles : (defaultRole ? [defaultRole] : []);
+    const assignment = {
+      userId: userId || null,
+      displayName,
+      roles: finalRoles
+    };
+    if(email){
+      assignment.email = email;
+    }
+    if(finalRoles.length){
+      assignment.primaryRole = finalRoles[0];
+    }else if(defaultRole){
+      assignment.primaryRole = defaultRole;
+    }
+    return assignment;
+  }
+
+  _normalizeAssignmentList(list = [], defaultRole = null){
+    const normalized = Array.isArray(list) ? list : [];
+    const assignments = [];
+    const seen = new Set();
+    normalized.forEach(entry =>{
+      const assignment = this._normalizeUserAssignment(entry, defaultRole);
+      const key = assignment.userId ? `id:${assignment.userId}` : assignment.displayName ? `name:${assignment.displayName.toLowerCase()}` : null;
+      if(!key){
+        return;
+      }
+      if(seen.has(key)){
+        return;
+      }
+      seen.add(key);
+      assignments.push(assignment);
+    });
+    return assignments;
+  }
+
+  _extractAssignmentName(raw, defaultRole = null){
+    const assignment = this._normalizeUserAssignment(raw, defaultRole);
+    return assignment.displayName;
   }
 
   _normalizeNameList(list, options = {}){

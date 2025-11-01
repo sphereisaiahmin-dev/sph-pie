@@ -5,9 +5,45 @@ const { v4: uuidv4 } = require('uuid');
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
 const ARCHIVE_RETENTION_MONTHS = 2;
-const DEFAULT_PILOTS = ['Alex','Nick','John Henery','James','Robert','Nazar'];
-const DEFAULT_CREW = ['Alex','Nick','John Henery','James','Robert','Nazar'];
-const DEFAULT_MONKEY_LEADS = ['Cleo','Bret','Leslie','Dallas'];
+const VALID_ROLES = ['admin', 'lead', 'operator', 'crew'];
+
+function normalizeRole(role){
+  if(typeof role !== 'string'){
+    return null;
+  }
+  const trimmed = role.trim().toLowerCase();
+  if(!trimmed){
+    return null;
+  }
+  if(trimmed === 'pilot' || trimmed === 'pilots'){
+    return 'operator';
+  }
+  if(trimmed === 'monkeylead' || trimmed === 'monkey_lead' || trimmed === 'monkey-lead'){
+    return 'crew';
+  }
+  if(trimmed === 'leadpilot' || trimmed === 'lead_pilot' || trimmed === 'lead-pilot' || trimmed === 'leads'){
+    return 'lead';
+  }
+  if(VALID_ROLES.includes(trimmed)){
+    return trimmed;
+  }
+  return null;
+}
+
+function normalizeRoles(input){
+  const values = Array.isArray(input) ? input : [input];
+  const normalized = [];
+  values.forEach(value => {
+    const role = normalizeRole(value);
+    if(!role){
+      return;
+    }
+    if(!normalized.includes(role)){
+      normalized.push(role);
+    }
+  });
+  return normalized;
+}
 
 class SqlProvider {
   constructor(config = {}){
@@ -39,10 +75,6 @@ class SqlProvider {
     }else{
       this.db = new this.SQL.Database();
       this._ensureSchema();
-      shouldPersist = true;
-    }
-
-    if(this._seedDefaultStaff()){
       shouldPersist = true;
     }
 
@@ -266,53 +298,223 @@ class SqlProvider {
   }
 
   async getStaff(){
+    const users = await this.listUsers();
+    const crew = [];
+    const pilots = [];
+    const crewLeads = [];
+    users.forEach(user =>{
+      if(!user || typeof user !== 'object'){
+        return;
+      }
+      const roles = Array.isArray(user.roles) ? user.roles : [];
+      if(roles.includes('crew')){
+        crew.push(user.name);
+        crewLeads.push(user.name);
+      }
+      if(roles.includes('operator')){
+        pilots.push(user.name);
+      }
+    });
+    crew.sort((a, b) => a.localeCompare(b));
+    pilots.sort((a, b) => a.localeCompare(b));
+    crewLeads.sort((a, b) => a.localeCompare(b));
     return {
-      crew: this._listStaffByRole('crew'),
-      pilots: this._listStaffByRole('pilot'),
-      monkeyLeads: this._listMonkeyLeads()
+      crew,
+      pilots,
+      monkeyLeads: crewLeads,
+      users: users.map(user => ({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        roles: Array.isArray(user.roles) ? [...user.roles] : [],
+        isActive: user.isActive
+      }))
     };
   }
 
   async replaceStaff(staff = {}){
-    const crew = this._normalizeNameList(staff.crew || [], {sort: true});
-    const pilots = this._normalizeNameList(staff.pilots || [], {sort: true});
-    const monkeyLeads = this._normalizeNameList(staff.monkeyLeads || [], {sort: true});
-    this._replaceStaffRole('crew', crew);
-    this._replaceStaffRole('pilot', pilots);
-    this._replaceMonkeyLeads(monkeyLeads);
-    await this._persistDatabase();
-    return {crew, pilots, monkeyLeads};
+    const err = new Error('Legacy staff management is deprecated. Use /api/users to manage accounts.');
+    err.status = 410;
+    throw err;
   }
 
+  async listUsers(){
+    const rows = this._select(`
+      SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at, u.updated_at,
+             GROUP_CONCAT(r.role) AS roles
+      FROM users u
+      LEFT JOIN user_roles r ON r.user_id = u.id
+      GROUP BY u.id
+      ORDER BY LOWER(u.name)
+    `);
+    return rows.map(row => this._mapUserRow(row));
+  }
+
+  async getUser(id){
+    if(!id){
+      return null;
+    }
+    const row = this._selectOne(`
+      SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at, u.updated_at,
+             GROUP_CONCAT(r.role) AS roles
+      FROM users u
+      LEFT JOIN user_roles r ON r.user_id = u.id
+      WHERE u.id = ?
+      GROUP BY u.id
+    `, [id]);
+    return row ? this._mapUserRow(row) : null;
+  }
+
+  async getUserByEmail(email){
+    if(typeof email !== 'string' || !email.trim()){
+      return null;
+    }
+    const normalized = email.trim().toLowerCase();
+    const row = this._selectOne(`
+      SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at, u.updated_at,
+             GROUP_CONCAT(r.role) AS roles
+      FROM users u
+      LEFT JOIN user_roles r ON r.user_id = u.id
+      WHERE LOWER(u.email) = LOWER(?)
+      GROUP BY u.id
+    `, [normalized]);
+    return row ? this._mapUserRow(row) : null;
+  }
+
+  async createUser({name, email, passwordHash = null, roles = [], isActive = true}){
+    const now = new Date().toISOString();
+    const id = uuidv4();
+    const normalizedRoles = this._normalizeRoles(roles);
+    this._run(`
+      INSERT INTO users (id, name, email, password_hash, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      id,
+      name,
+      email,
+      passwordHash,
+      isActive ? 1 : 0,
+      now,
+      now
+    ]);
+    this._replaceUserRoles(id, normalizedRoles, now);
+    await this._persistDatabase();
+    return this.getUser(id);
+  }
+
+  async updateUser(id, updates = {}){
+    const existing = await this.getUser(id);
+    if(!existing){
+      return null;
+    }
+    const fields = [];
+    const params = [];
+    const timestamp = new Date().toISOString();
+    let touched = false;
+    if(updates.name !== undefined){
+      fields.push('name = ?');
+      params.push(updates.name);
+    }
+    if(updates.email !== undefined){
+      fields.push('email = ?');
+      params.push(updates.email);
+    }
+    if(updates.isActive !== undefined){
+      fields.push('is_active = ?');
+      params.push(updates.isActive ? 1 : 0);
+    }
+    if(fields.length){
+      fields.push('updated_at = ?');
+      params.push(timestamp);
+      params.push(id);
+      this._run(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`, params);
+      touched = true;
+    }
+    if(updates.roles !== undefined){
+      const normalizedRoles = this._normalizeRoles(updates.roles);
+      this._replaceUserRoles(id, normalizedRoles, timestamp);
+      touched = true;
+    }
+    if(touched && !fields.length){
+      this._run('UPDATE users SET updated_at = ? WHERE id = ?', [timestamp, id]);
+    }
+    await this._persistDatabase();
+    return this.getUser(id);
+  }
+
+  async setUserPassword(id, passwordHash){
+    if(!id){
+      return null;
+    }
+    this._run('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?', [passwordHash, new Date().toISOString(), id]);
+    await this._persistDatabase();
+    return this.getUser(id);
+  }
+
+
   _assertRequiredShowFields(raw = {}){
-    const required = [
-      {key: 'date', label: 'Date'},
-      {key: 'time', label: 'Show start time'},
-      {key: 'label', label: 'Show label'},
-      {key: 'leadPilot', label: 'Lead pilot'},
-      {key: 'monkeyLead', label: 'Monkey lead'}
-    ];
-    required.forEach(field =>{
-      const value = typeof raw[field.key] === 'string' ? raw[field.key].trim() : '';
-      if(!value){
-        const err = new Error(`${field.label} is required`);
-        err.status = 400;
-        throw err;
-      }
-    });
+    const date = typeof raw.date === 'string' ? raw.date.trim() : '';
+    if(!date){
+      const err = new Error('Date is required');
+      err.status = 400;
+      throw err;
+    }
+    const time = typeof raw.time === 'string' ? raw.time.trim() : '';
+    if(!time){
+      const err = new Error('Show start time is required');
+      err.status = 400;
+      throw err;
+    }
+    const label = typeof raw.label === 'string' ? raw.label.trim() : '';
+    if(!label){
+      const err = new Error('Show label is required');
+      err.status = 400;
+      throw err;
+    }
+    const leadName = this._extractAssignmentName(raw.lead ?? raw.leadPilot, 'lead');
+    if(!leadName){
+      const err = new Error('Lead assignment is required');
+      err.status = 400;
+      throw err;
+    }
+    const crewLeadName = this._extractAssignmentName(raw.crewLead ?? raw.monkeyLead, 'crew');
+    if(!crewLeadName){
+      const err = new Error('Crew lead assignment is required');
+      err.status = 400;
+      throw err;
+    }
   }
 
   _normalizeShow(raw){
     const createdAt = typeof raw.createdAt === 'number' ? raw.createdAt : Number(raw.createdAt);
     const updatedAt = typeof raw.updatedAt === 'number' ? raw.updatedAt : Number(raw.updatedAt);
+    const leadAssignment = this._normalizeUserAssignment(raw.lead !== undefined ? raw.lead : raw.leadPilot, 'lead');
+    const crewLeadAssignment = this._normalizeUserAssignment(raw.crewLead !== undefined ? raw.crewLead : raw.monkeyLead, 'crew');
+    const crewSource = raw.crewAssignments !== undefined ? raw.crewAssignments : raw.crew;
+    const crewAssignments = this._normalizeAssignmentList(crewSource, 'crew');
+    crewAssignments.sort((a, b)=>{
+      const aName = (a.displayName || '').toLowerCase();
+      const bName = (b.displayName || '').toLowerCase();
+      if(aName < bName){
+        return -1;
+      }
+      if(aName > bName){
+        return 1;
+      }
+      return 0;
+    });
+    const crewNames = crewAssignments.map(item => item.displayName).filter(Boolean);
     return {
       id: raw.id,
       date: typeof raw.date === 'string' ? raw.date.trim() : '',
       time: typeof raw.time === 'string' ? raw.time.trim() : '',
       label: typeof raw.label === 'string' ? raw.label.trim() : '',
-      crew: Array.isArray(raw.crew) ? this._normalizeNameList(raw.crew, {sort: true}) : [],
-      leadPilot: typeof raw.leadPilot === 'string' ? raw.leadPilot.trim() : '',
-      monkeyLead: typeof raw.monkeyLead === 'string' ? raw.monkeyLead.trim() : '',
+      lead: leadAssignment,
+      crewLead: crewLeadAssignment,
+      crewAssignments,
+      crew: crewNames,
+      leadPilot: leadAssignment.displayName,
+      monkeyLead: crewLeadAssignment.displayName,
       notes: typeof raw.notes === 'string' ? raw.notes.trim() : '',
       entries: Array.isArray(raw.entries) ? raw.entries.map(e => this._normalizeEntry(e)) : [],
       createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
@@ -322,6 +524,28 @@ class SqlProvider {
 
   _normalizeEntry(raw){
     const ts = typeof raw.ts === 'number' ? raw.ts : Number(raw.ts);
+    const operatorSource = raw.assignedOperator !== undefined ? raw.assignedOperator
+      : (raw.operator && typeof raw.operator === 'object' ? raw.operator : null);
+    const operatorAssignment = this._normalizeUserAssignment(operatorSource, 'operator');
+    let operatorName = typeof raw.operatorName === 'string' ? raw.operatorName.trim() : '';
+    if(!operatorName && typeof raw.operator === 'string'){
+      operatorName = raw.operator.trim();
+    }
+    if(!operatorName){
+      operatorName = operatorAssignment.displayName;
+    }
+    let operatorId = typeof raw.operatorId === 'string' ? raw.operatorId.trim() : '';
+    if(!operatorId){
+      operatorId = operatorAssignment.userId || '';
+    }
+    const operatorRoles = operatorAssignment.roles && operatorAssignment.roles.length
+      ? operatorAssignment.roles
+      : ['operator'];
+    const assignedOperator = {
+      ...operatorAssignment,
+      displayName: operatorName || operatorAssignment.displayName,
+      roles: operatorRoles
+    };
     return {
       id: raw.id || uuidv4(),
       ts: Number.isFinite(ts) ? ts : Date.now(),
@@ -335,7 +559,11 @@ class SqlProvider {
       severity: typeof raw.severity === 'string' ? raw.severity.trim() : '',
       rootCause: typeof raw.rootCause === 'string' ? raw.rootCause.trim() : '',
       actions: Array.isArray(raw.actions) ? this._normalizeNameList(raw.actions) : [],
-      operator: typeof raw.operator === 'string' ? raw.operator.trim() : '',
+      operator: operatorName,
+      operatorName,
+      operatorId: operatorId || null,
+      operatorRoles,
+      assignedOperator,
       batteryId: typeof raw.batteryId === 'string' ? raw.batteryId.trim() : '',
       delaySec: raw.delaySec === null || raw.delaySec === undefined || raw.delaySec === ''
         ? null
@@ -372,8 +600,9 @@ class SqlProvider {
     if(!show){
       return;
     }
-    const normalized = (entry.operator || '').trim().toLowerCase();
-    if(!normalized){
+    const normalizedId = typeof entry.operatorId === 'string' ? entry.operatorId.trim().toLowerCase() : '';
+    const normalizedName = (entry.operatorName || entry.operator || '').trim().toLowerCase();
+    if(!normalizedId && !normalizedName){
       return;
     }
     const hasDuplicate = (show.entries || []).some(existing => {
@@ -383,11 +612,18 @@ class SqlProvider {
       if(existing.id === entry.id){
         return false;
       }
-      const existingPilot = (existing.operator || '').trim().toLowerCase();
-      return existingPilot === normalized;
+      const existingId = typeof existing.operatorId === 'string' ? existing.operatorId.trim().toLowerCase() : '';
+      if(normalizedId && existingId && existingId === normalizedId){
+        return true;
+      }
+      const existingName = (existing.operatorName || existing.operator || '').trim().toLowerCase();
+      if(normalizedName && existingName && existingName === normalizedName){
+        return true;
+      }
+      return false;
     });
     if(hasDuplicate){
-      const err = new Error('Pilot already has an entry for this show.');
+      const err = new Error('Operator already has an entry for this show.');
       err.status = 400;
       throw err;
     }
@@ -395,6 +631,7 @@ class SqlProvider {
 
   _ensureSchema(){
     let mutated = false;
+    this.db.exec('PRAGMA foreign_keys = ON;');
     if(!this._tableExists('shows')){
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS shows (
@@ -413,6 +650,76 @@ class SqlProvider {
         )
       `);
     }
+
+    if(!this._tableExists('users')){
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS users (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          email TEXT NOT NULL UNIQUE,
+          password_hash TEXT,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `);
+      mutated = true;
+    }else{
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS users (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          email TEXT NOT NULL UNIQUE,
+          password_hash TEXT,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `);
+      if(!this._columnExists('users', 'password_hash')){
+        this.db.exec('ALTER TABLE users ADD COLUMN password_hash TEXT');
+        mutated = true;
+      }
+      if(!this._columnExists('users', 'is_active')){
+        this.db.exec('ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1');
+        mutated = true;
+      }
+      if(!this._columnExists('users', 'created_at')){
+        this.db.exec('ALTER TABLE users ADD COLUMN created_at TEXT');
+        mutated = true;
+      }
+      if(!this._columnExists('users', 'updated_at')){
+        this.db.exec('ALTER TABLE users ADD COLUMN updated_at TEXT');
+        mutated = true;
+      }
+    }
+
+    this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)');
+
+    if(!this._tableExists('user_roles')){
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS user_roles (
+          user_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, role),
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+      `);
+      mutated = true;
+    }else{
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS user_roles (
+          user_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, role),
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+      `);
+    }
+
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_user_roles_role ON user_roles(role)');
 
     if(!this._tableExists('staff')){
       this.db.exec(`
@@ -486,53 +793,133 @@ class SqlProvider {
     return mutated;
   }
 
-  _seedDefaultStaff(){
-    let mutated = false;
-    if(this._listStaffByRole('pilot').length === 0){
-      this._replaceStaffRole('pilot', this._normalizeNameList(DEFAULT_PILOTS, {sort: true}));
-      mutated = true;
-    }
-    if(this._listStaffByRole('crew').length === 0){
-      this._replaceStaffRole('crew', this._normalizeNameList(DEFAULT_CREW, {sort: true}));
-      mutated = true;
-    }
-    if(this._listMonkeyLeads().length === 0){
-      this._replaceMonkeyLeads(this._normalizeNameList(DEFAULT_MONKEY_LEADS, {sort: true}));
-      mutated = true;
-    }
-    return mutated;
-  }
-
-  _listStaffByRole(role){
-    const rows = this._select('SELECT name FROM staff WHERE role = ? ORDER BY name COLLATE NOCASE', [role]);
-    return rows.map(row => row.name);
-  }
-
-  _listMonkeyLeads(){
-    const rows = this._select('SELECT name FROM monkey_leads ORDER BY name COLLATE NOCASE');
-    return rows.map(row => row.name);
-  }
-
-  _replaceStaffRole(role, names){
-    this._run('DELETE FROM staff WHERE role = ?', [role]);
-    if(!Array.isArray(names) || names.length === 0){
+  _replaceUserRoles(userId, roles = [], timestamp = new Date().toISOString()){
+    if(!userId){
       return;
     }
-    const timestamp = new Date().toISOString();
-    names.forEach(name =>{
-      this._run('INSERT INTO staff (id, name, role, created_at) VALUES (?, ?, ?, ?)', [uuidv4(), name, role, timestamp]);
+    this._run('DELETE FROM user_roles WHERE user_id = ?', [userId]);
+    const normalized = this._normalizeRoles(roles);
+    normalized.forEach(role =>{
+      this._run('INSERT INTO user_roles (user_id, role, created_at) VALUES (?, ?, ?)', [userId, role, timestamp]);
     });
   }
 
-  _replaceMonkeyLeads(names){
-    this._run('DELETE FROM monkey_leads');
-    if(!Array.isArray(names) || names.length === 0){
-      return;
+  _mapUserRow(row){
+    if(!row){
+      return null;
     }
-    const timestamp = new Date().toISOString();
-    names.forEach(name =>{
-      this._run('INSERT INTO monkey_leads (id, name, created_at) VALUES (?, ?, ?)', [uuidv4(), name, timestamp]);
+    const roleList = typeof row.roles === 'string' && row.roles.length
+      ? row.roles.split(',').map(value => normalizeRole(value)).filter(Boolean)
+      : [];
+    const uniqueRoles = Array.from(new Set(roleList));
+    return {
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      passwordHash: row.password_hash || null,
+      isActive: row.is_active === 1 || row.is_active === '1' || row.is_active === true,
+      createdAt: row.created_at ? row.created_at : new Date().toISOString(),
+      updatedAt: row.updated_at ? row.updated_at : row.created_at,
+      roles: uniqueRoles
+    };
+  }
+
+  _normalizeRoles(roles){
+    const normalized = normalizeRoles(roles);
+    const filtered = normalized.filter(role => VALID_ROLES.includes(role));
+    if(filtered.length === 0){
+      throw new Error('At least one valid role is required.');
+    }
+    return filtered;
+  }
+
+  _normalizeDisplayName(value){
+    if(typeof value === 'string'){
+      return value.trim();
+    }
+    return '';
+  }
+
+  _normalizeUserAssignment(raw, defaultRole = null){
+    const roles = [];
+    if(defaultRole){
+      roles.push(defaultRole);
+    }
+    let userId = null;
+    let email = null;
+    let displayName = '';
+    if(typeof raw === 'string'){
+      displayName = this._normalizeDisplayName(raw);
+    }else if(raw && typeof raw === 'object'){
+      if(typeof raw.userId === 'string' && raw.userId.trim()){
+        userId = raw.userId.trim();
+      }else if(typeof raw.id === 'string' && raw.id.trim()){
+        userId = raw.id.trim();
+      }
+      if(typeof raw.email === 'string' && raw.email.trim()){
+        email = raw.email.trim();
+      }
+      const candidateNames = [raw.displayName, raw.name, raw.fullName, raw.label, raw.monkeyLead];
+      for(const candidate of candidateNames){
+        const normalized = this._normalizeDisplayName(candidate);
+        if(normalized){
+          displayName = normalized;
+          break;
+        }
+      }
+      if(!displayName && raw && typeof raw.toString === 'function'){
+        const fallback = this._normalizeDisplayName(raw.toString());
+        if(fallback && fallback !== '[object Object]'){
+          displayName = fallback;
+        }
+      }
+      if(Array.isArray(raw.roles)){
+        roles.push(...raw.roles);
+      }
+      if(typeof raw.role === 'string'){
+        roles.push(raw.role);
+      }
+    }
+    const normalizedRoles = normalizeRoles(roles);
+    const finalRoles = normalizedRoles.length ? normalizedRoles : (defaultRole ? [defaultRole] : []);
+    const assignment = {
+      userId: userId || null,
+      displayName,
+      roles: finalRoles
+    };
+    if(email){
+      assignment.email = email;
+    }
+    if(finalRoles.length){
+      assignment.primaryRole = finalRoles[0];
+    }else if(defaultRole){
+      assignment.primaryRole = defaultRole;
+    }
+    return assignment;
+  }
+
+  _normalizeAssignmentList(list = [], defaultRole = null){
+    const normalized = Array.isArray(list) ? list : [];
+    const assignments = [];
+    const seen = new Set();
+    normalized.forEach(entry =>{
+      const assignment = this._normalizeUserAssignment(entry, defaultRole);
+      const key = assignment.userId ? `id:${assignment.userId}` : assignment.displayName ? `name:${assignment.displayName.toLowerCase()}` : null;
+      if(!key){
+        return;
+      }
+      if(seen.has(key)){
+        return;
+      }
+      seen.add(key);
+      assignments.push(assignment);
     });
+    return assignments;
+  }
+
+  _extractAssignmentName(raw, defaultRole = null){
+    const assignment = this._normalizeUserAssignment(raw, defaultRole);
+    return assignment.displayName;
   }
 
   _normalizeNameList(list = [], options = {}){

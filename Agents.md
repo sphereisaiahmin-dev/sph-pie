@@ -49,3 +49,29 @@ When you introduce authentication/authorization layers:
 - Document additional manual or automated checks in your pull request descriptions for traceability.
 
 Keep this guide current whenever you adjust critical flows, expand role handling, or modify persistence logic.
+
+---
+
+## Backend Authentication Status & Front-End Handoff Notes (v2 transition)
+- A credentialed account system now lives on the server. Login/logout flows are available at `/api/auth/login` and `/api/auth/logout`, and the active session can be queried through `/api/session`.
+- Role-aware guards wrap the API:
+  - Admin-only: `/api/config`, `/api/users`, webhook simulation, and destructive show mutations.
+  - Lead & Admin: show creation/update/archive, entry deletion.
+  - Operator, Lead, Admin: entry creation/update.
+  - Crew (plus higher roles): show reads and archive access.
+- Staff text areas are deprecated. The legacy `/api/staff` `PUT` endpoint now returns **410 Gone** to force the UI over to the new `/api/users` management surface.
+- Default users seeded at boot (password: `SphereOps!2024` unless overridden with `MONKEY_TRACKER_SEED_PASSWORD`). Prompt operators to change their password immediately.
+- Show payloads now include structured assignments:
+  - `lead`, `crewLead`, and `crewAssignments` expose `{userId, displayName, roles}` objects.
+  - Entry objects carry `operatorId`, `operatorName`, `operatorRoles`, and `assignedOperator`.
+  - Legacy string fields (`leadPilot`, `monkeyLead`, `crew`, `operator`) remain for backward compatibility but should be retired in the UI.
+
+### Front-End follow-up checklist
+1. Build a login view and session bootstrap that calls `/api/auth/login`, stores the session cookie, and hydrates `state.session` from `/api/session`.
+2. Replace the PIN-gated admin drawer with a role-aware hamburger menu:
+   - Always expose user settings (password change via `/api/auth/change-password` and role-specific landing content).
+   - Show the admin panel only when `session.roles` contains `admin`; use `/api/users` for account CRUD and `/api/config` for system settings.
+   - Move webhook controls and other admin toggles into this new admin landing page.
+3. Update all show/entry forms to feed the new assignment objects instead of raw strings. Fetch the user roster from `/api/users` (and optionally the extended payload returned by `/api/staff` for legacy compatibility) to populate selectors.
+4. Audit BroadcastChannel payloads so session awareness is respected—avoid applying updates from users who lose access mid-session.
+5. Remove reliance on the legacy staff textarea screens once the user management UI lands.

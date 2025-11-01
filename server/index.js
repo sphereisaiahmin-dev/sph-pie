@@ -4,12 +4,15 @@ const morgan = require('morgan');
 const { loadConfig, saveConfig } = require('./configStore');
 const { initProvider, getProvider } = require('./storage');
 const { setWebhookConfig, getWebhookStatus, dispatchEntryEvent, dispatchShowEvent } = require('./webhookDispatcher');
+const { SessionStore, createAuthRouter, createUserRouter, sessionMiddleware, requireAuth, requireRoles, sanitizeUser } = require('./auth');
+const { seedDefaultUsers } = require('./auth/userSeeder');
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
 
 async function bootstrap(){
   const app = express();
   let config = loadConfig();
+  const sessionStore = new SessionStore();
   let configuredHost = config.host || '10.241.211.120';
   let configuredPort = config.port || 3000;
   const envPort = Number.parseInt(process.env.PORT, 10);
@@ -18,11 +21,27 @@ async function bootstrap(){
   let boundHost = envHost || configuredHost;
   let serverInstance = null;
   await initProvider(config);
+  const defaultSeedPassword = process.env.MONKEY_TRACKER_SEED_PASSWORD || process.env.SEED_USER_PASSWORD || 'SphereOps!2024';
+  await seedDefaultUsers({defaultPassword: defaultSeedPassword});
   await setWebhookConfig(config.webhook);
 
   app.use(express.json({limit: '2mb'}));
   app.use(morgan('dev'));
   app.use(express.static(path.join(__dirname, '..', 'public')));
+  app.use(sessionMiddleware(sessionStore));
+
+  const requireAuthenticated = requireAuth();
+  const requireAdmin = requireRoles('admin');
+  const requireCrewOrHigher = requireRoles(['crew', 'operator', 'lead', 'admin']);
+  const requireOperatorOrLead = requireRoles(['operator', 'lead', 'admin']);
+  const requireLeadOrAdmin = requireRoles(['lead', 'admin']);
+
+  app.use('/api/auth', createAuthRouter(sessionStore));
+  app.use('/api/users', requireAuthenticated, requireAdmin, createUserRouter());
+
+  app.get('/api/session', requireAuthenticated, (req, res)=>{
+    res.json({user: sanitizeUser(req.user), session: req.session ? {...req.session, token: undefined} : null});
+  });
 
   function asyncHandler(fn){
     return (req, res, next)=>{
@@ -63,12 +82,12 @@ async function bootstrap(){
     });
   });
 
-  app.get('/api/config', (req, res)=>{
+  app.get('/api/config', requireAuthenticated, requireAdmin, (req, res)=>{
     const storageMeta = getStorageMetadata();
     res.json({...config, storageMeta, webhookStatus: getWebhookStatus()});
   });
 
-  app.put('/api/config', asyncHandler(async (req, res)=>{
+  app.put('/api/config', requireAuthenticated, requireAdmin, asyncHandler(async (req, res)=>{
     const nextConfig = saveConfig(req.body || {});
     await initProvider(nextConfig);
     await setWebhookConfig(nextConfig.webhook);
@@ -85,38 +104,38 @@ async function bootstrap(){
     res.json({...config, storageMeta, webhookStatus: getWebhookStatus()});
   }));
 
-  app.get('/api/staff', asyncHandler(async (req, res)=>{
+  app.get('/api/staff', requireAuthenticated, asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const staff = await provider.getStaff();
     res.json(staff);
   }));
 
-  app.put('/api/staff', asyncHandler(async (req, res)=>{
+  app.put('/api/staff', requireAuthenticated, requireAdmin, asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const staff = await provider.replaceStaff(req.body || {});
     res.json(staff);
   }));
 
-  app.get('/api/shows', asyncHandler(async (req, res)=>{
+  app.get('/api/shows', requireAuthenticated, requireCrewOrHigher, asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const shows = await provider.listShows();
     const storageMeta = getStorageMetadata();
     res.json({storage: storageMeta.label, storageMeta, webhook: getWebhookStatus(), shows});
   }));
 
-  app.get('/api/shows/archive', asyncHandler(async (req, res)=>{
+  app.get('/api/shows/archive', requireAuthenticated, requireCrewOrHigher, asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const shows = await provider.listArchivedShows();
     res.json({shows});
   }));
 
-  app.post('/api/shows', asyncHandler(async (req, res)=>{
+  app.post('/api/shows', requireAuthenticated, requireLeadOrAdmin, asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const show = await provider.createShow(req.body || {});
     res.status(201).json(show);
   }));
 
-  app.get('/api/shows/:id', asyncHandler(async (req, res)=>{
+  app.get('/api/shows/:id', requireAuthenticated, requireCrewOrHigher, asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const show = await provider.getShow(req.params.id);
     if(!show){
@@ -126,7 +145,7 @@ async function bootstrap(){
     res.json(show);
   }));
 
-  app.put('/api/shows/:id', asyncHandler(async (req, res)=>{
+  app.put('/api/shows/:id', requireAuthenticated, requireLeadOrAdmin, asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const show = await provider.updateShow(req.params.id, req.body || {});
     if(!show){
@@ -136,7 +155,7 @@ async function bootstrap(){
     res.json(show);
   }));
 
-  app.delete('/api/shows/:id', asyncHandler(async (req, res)=>{
+  app.delete('/api/shows/:id', requireAuthenticated, requireAdmin, asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const archived = await provider.deleteShow(req.params.id);
     if(!archived){
@@ -147,7 +166,7 @@ async function bootstrap(){
     res.json(archived);
   }));
 
-  app.post('/api/shows/:id/archive', asyncHandler(async (req, res)=>{
+  app.post('/api/shows/:id/archive', requireAuthenticated, requireLeadOrAdmin, asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const archived = await provider.archiveShowNow(req.params.id);
     if(!archived){
@@ -158,7 +177,7 @@ async function bootstrap(){
     res.json(archived);
   }));
 
-  app.post('/api/webhook/simulate-month', asyncHandler(async (req, res)=>{
+  app.post('/api/webhook/simulate-month', requireAuthenticated, requireAdmin, asyncHandler(async (req, res)=>{
     const provider = getProvider();
     if(!provider){
       res.status(503).json({error: 'Storage provider not ready'});
@@ -242,7 +261,7 @@ async function bootstrap(){
     res.json({requested, dispatched, skipped, errors, webhook: getWebhookStatus()});
   }));
 
-  app.post('/api/shows/:id/entries', asyncHandler(async (req, res)=>{
+  app.post('/api/shows/:id/entries', requireAuthenticated, requireOperatorOrLead, asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const entry = await provider.addEntry(req.params.id, req.body || {});
     if(!entry){
@@ -254,7 +273,7 @@ async function bootstrap(){
     res.status(201).json(entry);
   }));
 
-  app.put('/api/shows/:id/entries/:entryId', asyncHandler(async (req, res)=>{
+  app.put('/api/shows/:id/entries/:entryId', requireAuthenticated, requireOperatorOrLead, asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const entry = await provider.updateEntry(req.params.id, req.params.entryId, req.body || {});
     if(!entry){
@@ -266,7 +285,7 @@ async function bootstrap(){
     res.json(entry);
   }));
 
-  app.delete('/api/shows/:id/entries/:entryId', asyncHandler(async (req, res)=>{
+  app.delete('/api/shows/:id/entries/:entryId', requireAuthenticated, requireLeadOrAdmin, asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const result = await provider.deleteEntry(req.params.id, req.params.entryId);
     if(!result){

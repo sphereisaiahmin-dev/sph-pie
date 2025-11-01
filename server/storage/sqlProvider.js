@@ -340,7 +340,7 @@ class SqlProvider {
 
   async listUsers(){
     const rows = this._select(`
-      SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at, u.updated_at,
+      SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at, u.updated_at, u.must_change_password,
              GROUP_CONCAT(r.role) AS roles
       FROM users u
       LEFT JOIN user_roles r ON r.user_id = u.id
@@ -355,7 +355,7 @@ class SqlProvider {
       return null;
     }
     const row = this._selectOne(`
-      SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at, u.updated_at,
+      SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at, u.updated_at, u.must_change_password,
              GROUP_CONCAT(r.role) AS roles
       FROM users u
       LEFT JOIN user_roles r ON r.user_id = u.id
@@ -371,7 +371,7 @@ class SqlProvider {
     }
     const normalized = email.trim().toLowerCase();
     const row = this._selectOne(`
-      SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at, u.updated_at,
+      SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at, u.updated_at, u.must_change_password,
              GROUP_CONCAT(r.role) AS roles
       FROM users u
       LEFT JOIN user_roles r ON r.user_id = u.id
@@ -381,13 +381,13 @@ class SqlProvider {
     return row ? this._mapUserRow(row) : null;
   }
 
-  async createUser({name, email, passwordHash = null, roles = [], isActive = true}){
+  async createUser({name, email, passwordHash = null, roles = [], isActive = true, mustChangePassword = false}){
     const now = new Date().toISOString();
     const id = uuidv4();
     const normalizedRoles = this._normalizeRoles(roles);
     this._run(`
-      INSERT INTO users (id, name, email, password_hash, is_active, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO users (id, name, email, password_hash, is_active, created_at, updated_at, must_change_password)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       id,
       name,
@@ -395,7 +395,8 @@ class SqlProvider {
       passwordHash,
       isActive ? 1 : 0,
       now,
-      now
+      now,
+      mustChangePassword ? 1 : 0
     ]);
     this._replaceUserRoles(id, normalizedRoles, now);
     await this._persistDatabase();
@@ -423,6 +424,10 @@ class SqlProvider {
       fields.push('is_active = ?');
       params.push(updates.isActive ? 1 : 0);
     }
+    if(updates.mustChangePassword !== undefined){
+      fields.push('must_change_password = ?');
+      params.push(updates.mustChangePassword ? 1 : 0);
+    }
     if(fields.length){
       fields.push('updated_at = ?');
       params.push(timestamp);
@@ -442,11 +447,14 @@ class SqlProvider {
     return this.getUser(id);
   }
 
-  async setUserPassword(id, passwordHash){
+  async setUserPassword(id, passwordHash, options = {}){
     if(!id){
       return null;
     }
-    this._run('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?', [passwordHash, new Date().toISOString(), id]);
+    const opts = options || {};
+    const timestamp = new Date().toISOString();
+    const flag = opts.requireChange ? 1 : 0;
+    this._run('UPDATE users SET password_hash = ?, must_change_password = ?, updated_at = ? WHERE id = ?', [passwordHash, flag, timestamp, id]);
     await this._persistDatabase();
     return this.getUser(id);
   }
@@ -659,6 +667,7 @@ class SqlProvider {
           email TEXT NOT NULL UNIQUE,
           password_hash TEXT,
           is_active INTEGER NOT NULL DEFAULT 1,
+          must_change_password INTEGER NOT NULL DEFAULT 0,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         )
@@ -672,6 +681,7 @@ class SqlProvider {
           email TEXT NOT NULL UNIQUE,
           password_hash TEXT,
           is_active INTEGER NOT NULL DEFAULT 1,
+          must_change_password INTEGER NOT NULL DEFAULT 0,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         )
@@ -682,6 +692,10 @@ class SqlProvider {
       }
       if(!this._columnExists('users', 'is_active')){
         this.db.exec('ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1');
+        mutated = true;
+      }
+      if(!this._columnExists('users', 'must_change_password')){
+        this.db.exec('ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0');
         mutated = true;
       }
       if(!this._columnExists('users', 'created_at')){
@@ -820,7 +834,8 @@ class SqlProvider {
       isActive: row.is_active === 1 || row.is_active === '1' || row.is_active === true,
       createdAt: row.created_at ? row.created_at : new Date().toISOString(),
       updatedAt: row.updated_at ? row.updated_at : row.created_at,
-      roles: uniqueRoles
+      roles: uniqueRoles,
+      mustChangePassword: row.must_change_password === 1 || row.must_change_password === '1' || row.must_change_password === true
     };
   }
 

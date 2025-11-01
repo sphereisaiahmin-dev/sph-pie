@@ -343,7 +343,7 @@ class PostgresProvider {
     const usersTable = this._table('users');
     const userRolesTable = this._table('user_roles');
     const rows = await this._select(`
-      SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at, u.updated_at,
+      SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at, u.updated_at, u.must_change_password,
              ARRAY_REMOVE(ARRAY_AGG(r.role), NULL) AS roles
       FROM ${usersTable} u
       LEFT JOIN ${userRolesTable} r ON r.user_id = u.id
@@ -360,7 +360,7 @@ class PostgresProvider {
     const usersTable = this._table('users');
     const userRolesTable = this._table('user_roles');
     const row = await this._selectOne(`
-      SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at, u.updated_at,
+      SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at, u.updated_at, u.must_change_password,
              ARRAY_REMOVE(ARRAY_AGG(r.role), NULL) AS roles
       FROM ${usersTable} u
       LEFT JOIN ${userRolesTable} r ON r.user_id = u.id
@@ -378,7 +378,7 @@ class PostgresProvider {
     const usersTable = this._table('users');
     const userRolesTable = this._table('user_roles');
     const row = await this._selectOne(`
-      SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at, u.updated_at,
+      SELECT u.id, u.name, u.email, u.password_hash, u.is_active, u.created_at, u.updated_at, u.must_change_password,
              ARRAY_REMOVE(ARRAY_AGG(r.role), NULL) AS roles
       FROM ${usersTable} u
       LEFT JOIN ${userRolesTable} r ON r.user_id = u.id
@@ -388,15 +388,15 @@ class PostgresProvider {
     return row ? this._mapUserRow(row) : null;
   }
 
-  async createUser({name, email, passwordHash = null, roles = [], isActive = true}){
+  async createUser({name, email, passwordHash = null, roles = [], isActive = true, mustChangePassword = false}){
     const usersTable = this._table('users');
     const now = new Date();
     const id = uuidv4();
     const normalizedRoles = this._normalizeRoles(roles);
     await this._run(`
-      INSERT INTO ${usersTable} (id, name, email, password_hash, is_active, created_at, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $6)
-    `, [id, name, email, passwordHash, isActive ? true : false, now]);
+      INSERT INTO ${usersTable} (id, name, email, password_hash, is_active, must_change_password, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+    `, [id, name, email, passwordHash, isActive ? true : false, mustChangePassword ? true : false, now]);
     await this._replaceUserRoles(id, normalizedRoles, now);
     return this.getUser(id);
   }
@@ -422,6 +422,10 @@ class PostgresProvider {
       fields.push(`is_active = $${paramIndex += 1}`);
       params.push(updates.isActive ? true : false);
     }
+    if(updates.mustChangePassword !== undefined){
+      fields.push(`must_change_password = $${paramIndex += 1}`);
+      params.push(updates.mustChangePassword ? true : false);
+    }
     const now = new Date();
     if(fields.length){
       fields.push(`updated_at = $${paramIndex += 1}`);
@@ -441,9 +445,11 @@ class PostgresProvider {
     return this.getUser(id);
   }
 
-  async setUserPassword(id, passwordHash){
+  async setUserPassword(id, passwordHash, options = {}){
     const now = new Date();
-    await this._run(`UPDATE ${this._table('users')} SET password_hash = $2, updated_at = $3 WHERE id = $1`, [id, passwordHash, now]);
+    const opts = options || {};
+    const flag = opts.requireChange ? true : false;
+    await this._run(`UPDATE ${this._table('users')} SET password_hash = $2, must_change_password = $3, updated_at = $4 WHERE id = $1`, [id, passwordHash, flag, now]);
     return this.getUser(id);
   }
 
@@ -655,10 +661,12 @@ class PostgresProvider {
         email TEXT NOT NULL UNIQUE,
         password_hash TEXT,
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL
       )
     `);
+    await this._run(`ALTER TABLE ${usersTable} ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE`);
     await this._run(`
       CREATE TABLE IF NOT EXISTS ${userRolesTable} (
         user_id UUID NOT NULL REFERENCES ${usersTable}(id) ON DELETE CASCADE,
@@ -880,7 +888,8 @@ class PostgresProvider {
       isActive: row.is_active === true || row.is_active === 1 || row.is_active === '1',
       createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
       updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : (row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString()),
-      roles: Array.from(new Set(normalizedRoles))
+      roles: Array.from(new Set(normalizedRoles)),
+      mustChangePassword: row.must_change_password === true || row.must_change_password === 1 || row.must_change_password === '1'
     };
   }
 

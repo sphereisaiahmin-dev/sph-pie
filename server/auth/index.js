@@ -89,13 +89,13 @@ function createUserRouter(){
 
   router.post('/:id/password', async (req, res, next)=>{
     try{
-      const {password} = req.body || {};
+      const {password, requirePasswordChange} = req.body || {};
       if(typeof password !== 'string' || password.length < 8){
         const err = new Error('Password must be at least 8 characters.');
         err.status = 400;
         throw err;
       }
-      const user = await setUserPassword(req.params.id, password);
+      const user = await setUserPassword(req.params.id, password, {requireChange: Boolean(requirePasswordChange)});
       res.json({user});
     }catch(err){
       next(err);

@@ -14,7 +14,8 @@ const DEFAULT_USERS = [
 
 async function seedDefaultUsers({defaultPassword} = {}){
   const provider = getProvider();
-  const passwordHash = defaultPassword ? await hashPassword(defaultPassword) : null;
+  const passwordHash = defaultPassword ? await hashPassword(defaultPassword, {allowShort: true}) : null;
+  const requireChange = Boolean(passwordHash);
   for(const user of DEFAULT_USERS){
     const existing = await provider.getUserByEmail(user.email);
     if(existing){
@@ -25,7 +26,7 @@ async function seedDefaultUsers({defaultPassword} = {}){
         await provider.updateUser(existing.id, {roles: mergedRoles});
       }
       if(passwordHash && !existing.passwordHash){
-        await provider.setUserPassword(existing.id, passwordHash);
+        await provider.setUserPassword(existing.id, passwordHash, {requireChange});
       }
       continue;
     }
@@ -34,7 +35,8 @@ async function seedDefaultUsers({defaultPassword} = {}){
       email: user.email,
       passwordHash,
       roles: user.roles,
-      isActive: true
+      isActive: true,
+      mustChangePassword: requireChange
     });
   }
 }

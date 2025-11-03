@@ -167,7 +167,15 @@
           <div id="archiveModeControls" class="control-group"></div>
         </div>
         <div class="archive-chart-wrap">
-          <canvas id="archiveStatCanvas" class="archive-chart" role="img" aria-label="Archived show statistic over time"></canvas>
+          <div class="archive-chart-panel">
+            <div class="archive-chart-filter control-group control-group-inline">
+              <label for="archiveOperatorFilter">Operator</label>
+              <select id="archiveOperatorFilter">
+                <option value="">All operators</option>
+              </select>
+            </div>
+            <canvas id="archiveStatCanvas" class="archive-chart" role="img" aria-label="Archived show statistic over time"></canvas>
+          </div>
           <p id="archiveStatEmpty" class="help">Select one or more shows and metrics to render the chart.</p>
           <div id="archiveDayDetail" class="archive-day-detail" hidden>
             <div class="archive-day-detail-card" role="dialog" aria-labelledby="archiveDayDetailTitle">

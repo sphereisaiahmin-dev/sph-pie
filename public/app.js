@@ -130,7 +130,7 @@ const state = {
   archiveChartFilters: {
     startDate: null,
     endDate: null,
-    pilot: null
+    operator: null
   },
   archiveSelectionMode: 'calendar',
   archiveDailyGroups: [],
@@ -248,7 +248,7 @@ let archiveShowFilterStart = el('archiveShowFilterStart');
 let archiveShowFilterEnd = el('archiveShowFilterEnd');
 let archiveSelectAllShowsBtn = el('archiveSelectAllShows');
 let archiveClearShowSelectionBtn = el('archiveClearShowSelection');
-let archivePilotFilter = el('archivePilotFilter');
+const archiveOperatorFilter = el('archiveOperatorFilter');
 const archiveModeCalendarBtn = el('archiveModeCalendar');
 const archiveModeShowsBtn = el('archiveModeShows');
 const archiveStatCanvas = el('archiveStatCanvas');
@@ -364,6 +364,9 @@ function initUI(){
   }
   if(archiveModeShowsBtn){
     archiveModeShowsBtn.addEventListener('click', ()=> setArchiveSelectionMode('shows'));
+  }
+  if(archiveOperatorFilter){
+    archiveOperatorFilter.addEventListener('change', onArchiveOperatorFilterChange);
   }
   if(closeArchiveDayDetailBtn){
     closeArchiveDayDetailBtn.addEventListener('click', closeArchiveDayDetail);
@@ -1038,7 +1041,6 @@ function getArchiveCalendarControlsMarkup(){
       <input id="archiveShowFilterEnd" type="date" />
     </div>
     <p class="help small">Filter the show list using calendar dates.</p>
-    ${getArchivePilotFilterMarkup()}
   `;
 }
 
@@ -1051,18 +1053,6 @@ function getArchiveShowControlsMarkup(){
       <button id="archiveClearShowSelection" type="button" class="btn ghost small">Clear</button>
     </div>
     <p id="archiveShowHelp" class="help small">Use Shift or Ctrl/Cmd click to choose multiple shows.</p>
-    ${getArchivePilotFilterMarkup()}
-  `;
-}
-
-function getArchivePilotFilterMarkup(){
-  return `
-    <div class="control-group control-group-inline">
-      <label for="archivePilotFilter">Pilot</label>
-      <select id="archivePilotFilter">
-        <option value="">All pilots</option>
-      </select>
-    </div>
   `;
 }
 
@@ -1072,7 +1062,6 @@ function refreshArchiveModeControlRefs(){
   archiveShowFilterEnd = el('archiveShowFilterEnd');
   archiveSelectAllShowsBtn = el('archiveSelectAllShows');
   archiveClearShowSelectionBtn = el('archiveClearShowSelection');
-  archivePilotFilter = el('archivePilotFilter');
 
   if(archiveShowFilterStart){
     archiveShowFilterStart.addEventListener('change', ()=> onArchiveDateFilterChange('startDate', archiveShowFilterStart.value));
@@ -1089,17 +1078,14 @@ function refreshArchiveModeControlRefs(){
   if(archiveClearShowSelectionBtn){
     archiveClearShowSelectionBtn.addEventListener('click', clearFilteredArchiveSelection);
   }
-  if(archivePilotFilter){
-    archivePilotFilter.addEventListener('change', onArchivePilotFilterChange);
-  }
 }
 
 function renderArchiveChartControls(){
   renderArchiveSelectionMode();
   const shows = Array.isArray(state.archivedShows) ? state.archivedShows : [];
   const filters = typeof state.archiveChartFilters === 'object' && state.archiveChartFilters
-    ? Object.assign({startDate: null, endDate: null, pilot: null}, state.archiveChartFilters)
-    : {startDate: null, endDate: null, pilot: null};
+    ? Object.assign({startDate: null, endDate: null, operator: null}, state.archiveChartFilters)
+    : {startDate: null, endDate: null, operator: null};
   state.archiveChartFilters = filters;
   if(archiveShowFilterStart){
     archiveShowFilterStart.value = filters.startDate || '';
@@ -1110,24 +1096,24 @@ function renderArchiveChartControls(){
 
   const mode = getArchiveSelectionMode();
   const filteredShows = getFilteredArchivedShows(shows);
-  const pilotFilteredShows = getFilteredArchivedShows(shows, {includeDateFilter: false});
+  const operatorFilteredShows = getFilteredArchivedShows(shows, {includeDateFilter: false});
   if(mode === 'calendar'){
     state.selectedArchiveChartShows = filteredShows.map(show => show.id);
   }else{
-    const availableIds = new Set(pilotFilteredShows.map(show => show.id));
+    const availableIds = new Set(operatorFilteredShows.map(show => show.id));
     const isArraySelection = Array.isArray(state.selectedArchiveChartShows);
     const currentSelection = isArraySelection
       ? state.selectedArchiveChartShows.filter(id => availableIds.has(id))
       : [];
     const shouldAutoPopulate = !isArraySelection;
-    if(!currentSelection.length && pilotFilteredShows.length && shouldAutoPopulate){
-      currentSelection.push(...pilotFilteredShows.slice(0, Math.min(5, pilotFilteredShows.length)).map(show => show.id));
+    if(!currentSelection.length && operatorFilteredShows.length && shouldAutoPopulate){
+      currentSelection.push(...operatorFilteredShows.slice(0, Math.min(5, operatorFilteredShows.length)).map(show => show.id));
     }
     state.selectedArchiveChartShows = Array.from(new Set(currentSelection));
   }
 
   if(archiveStatShowSelect){
-    const optionShows = mode === 'calendar' ? filteredShows : pilotFilteredShows;
+    const optionShows = mode === 'calendar' ? filteredShows : operatorFilteredShows;
     if(optionShows.length){
       const optionsMarkup = optionShows.map(show => {
         const label = buildArchiveShowLabel(show);
@@ -1146,35 +1132,42 @@ function renderArchiveChartControls(){
     }
   }
 
-  if(archivePilotFilter){
-    const pilotSource = getFilteredArchivedShows(shows, {includePilotFilter: false});
-    const pilotNames = getArchivePilotNames(pilotSource);
-    if(pilotNames.length){
-      const pilotOptions = [''].concat(pilotNames).map(name => {
+  if(archiveOperatorFilter){
+    let operatorSource = [];
+    if(mode === 'calendar'){
+      operatorSource = getFilteredArchivedShows(shows, {includeOperatorFilter: false});
+    }else{
+      const selectedIds = new Set(Array.isArray(state.selectedArchiveChartShows) ? state.selectedArchiveChartShows : []);
+      const selectedShows = shows.filter(show => selectedIds.has(show.id));
+      operatorSource = getFilteredArchivedShows(selectedShows, {includeDateFilter: false, includeOperatorFilter: false});
+    }
+    const operatorNames = getArchiveOperatorNames(operatorSource);
+    if(operatorNames.length){
+      const operatorOptions = [''].concat(operatorNames).map(name => {
         if(!name){
-          return '<option value="">All pilots</option>';
+          return '<option value="">All operators</option>';
         }
         const safeName = escapeHtml(name);
         return `<option value="${safeName}">${safeName}</option>`;
       }).join('');
-      archivePilotFilter.innerHTML = pilotOptions;
-      const selectedPilot = filters.pilot || '';
-      const pilotMatch = selectedPilot
-        ? pilotNames.find(name => name.toLowerCase() === selectedPilot.toLowerCase())
+      archiveOperatorFilter.innerHTML = operatorOptions;
+      const selectedOperator = filters.operator || '';
+      const operatorMatch = selectedOperator
+        ? operatorNames.find(name => name.toLowerCase() === selectedOperator.toLowerCase())
         : '';
-      archivePilotFilter.value = pilotMatch || '';
-      archivePilotFilter.disabled = false;
-      if(pilotMatch){
-        state.archiveChartFilters.pilot = pilotMatch;
+      archiveOperatorFilter.value = operatorMatch || '';
+      archiveOperatorFilter.disabled = false;
+      if(operatorMatch){
+        state.archiveChartFilters.operator = operatorMatch;
       }
-      if(selectedPilot && !pilotMatch){
-        state.archiveChartFilters.pilot = null;
+      if(selectedOperator && !operatorMatch){
+        state.archiveChartFilters.operator = null;
       }
     }else{
-      archivePilotFilter.innerHTML = '<option value="">All pilots</option>';
-      archivePilotFilter.value = '';
-      archivePilotFilter.disabled = true;
-      state.archiveChartFilters.pilot = null;
+      archiveOperatorFilter.innerHTML = '<option value="">All operators</option>';
+      archiveOperatorFilter.value = '';
+      archiveOperatorFilter.disabled = true;
+      state.archiveChartFilters.operator = null;
     }
   }
 
@@ -1202,9 +1195,9 @@ function renderArchiveChartControls(){
     }else if(mode === 'calendar' && !filteredShows.length){
       archiveStatEmpty.hidden = false;
       archiveStatEmpty.textContent = 'No archived shows match the selected filters.';
-    }else if(mode === 'shows' && !pilotFilteredShows.length){
+    }else if(mode === 'shows' && !operatorFilteredShows.length){
       archiveStatEmpty.hidden = false;
-      archiveStatEmpty.textContent = 'No archived shows match the selected pilot.';
+      archiveStatEmpty.textContent = 'No archived shows match the selected operator.';
     }else if(mode === 'shows' && !state.selectedArchiveChartShows.length){
       archiveStatEmpty.hidden = false;
       archiveStatEmpty.textContent = 'Use the show picker to select one or more shows to render the chart.';
@@ -1553,19 +1546,19 @@ function onArchiveDateFilterChange(field, value){
     return;
   }
   if(!state.archiveChartFilters || typeof state.archiveChartFilters !== 'object'){
-    state.archiveChartFilters = {startDate: null, endDate: null, pilot: null};
+    state.archiveChartFilters = {startDate: null, endDate: null, operator: null};
   }
   state.archiveChartFilters[field] = value || null;
   renderArchiveChartControls();
   renderArchiveChart();
 }
 
-function onArchivePilotFilterChange(){
+function onArchiveOperatorFilterChange(){
   if(!state.archiveChartFilters || typeof state.archiveChartFilters !== 'object'){
-    state.archiveChartFilters = {startDate: null, endDate: null, pilot: null};
+    state.archiveChartFilters = {startDate: null, endDate: null, operator: null};
   }
-  const value = archivePilotFilter?.value || '';
-  state.archiveChartFilters.pilot = value || null;
+  const value = archiveOperatorFilter?.value || '';
+  state.archiveChartFilters.operator = value || null;
   closeArchiveDayDetail();
   renderArchiveChartControls();
   renderArchiveChart();
@@ -1629,11 +1622,11 @@ function getFilteredArchivedShows(shows = state.archivedShows, options = {}){
   const list = Array.isArray(shows) ? shows.slice() : [];
   const filters = state.archiveChartFilters || {};
   const includeDateFilter = options.includeDateFilter !== false;
-  const includePilotFilter = options.includePilotFilter !== false;
+  const includeOperatorFilter = options.includeOperatorFilter !== false;
   const startTs = includeDateFilter ? parseFilterDate(filters.startDate, false) : null;
   const endTs = includeDateFilter ? parseFilterDate(filters.endDate, true) : null;
-  const pilotFilter = includePilotFilter && typeof filters.pilot === 'string' && filters.pilot
-    ? filters.pilot.toLowerCase()
+  const operatorFilter = includeOperatorFilter && typeof filters.operator === 'string' && filters.operator
+    ? filters.operator.toLowerCase()
     : null;
   return list.filter(show => {
     const timestamp = getShowTimestamp(show);
@@ -1646,9 +1639,8 @@ function getFilteredArchivedShows(shows = state.archivedShows, options = {}){
     if(includeDateFilter && endTs !== null && timestamp > endTs){
       return false;
     }
-    if(pilotFilter){
-      const pilotName = typeof show?.leadPilot === 'string' ? show.leadPilot.toLowerCase() : '';
-      if(pilotName !== pilotFilter){
+    if(operatorFilter){
+      if(!showIncludesOperator(show, operatorFilter)){
         return false;
       }
     }
@@ -1656,15 +1648,64 @@ function getFilteredArchivedShows(shows = state.archivedShows, options = {}){
   });
 }
 
-function getArchivePilotNames(shows = []){
-  const names = new Set();
+function getArchiveOperatorNames(shows = []){
+  const collections = [];
   (Array.isArray(shows) ? shows : []).forEach(show => {
-    const pilot = typeof show?.leadPilot === 'string' ? show.leadPilot.trim() : '';
-    if(pilot){
-      names.add(pilot);
+    const lookup = collectShowOperatorMap(show);
+    if(lookup.size){
+      collections.push(lookup);
     }
   });
-  return Array.from(names).sort((a, b)=> a.localeCompare(b, undefined, {sensitivity: 'base'}));
+  if(!collections.length){
+    return [];
+  }
+  let intersection = null;
+  collections.forEach(map => {
+    const keys = Array.from(map.keys());
+    if(intersection === null){
+      intersection = new Set(keys);
+      return;
+    }
+    intersection = new Set(keys.filter(key => intersection.has(key)));
+  });
+  if(!intersection || !intersection.size){
+    return [];
+  }
+  const canonical = new Map();
+  collections.forEach(map => {
+    intersection.forEach(key => {
+      if(!canonical.has(key) && map.has(key)){
+        canonical.set(key, map.get(key));
+      }
+    });
+  });
+  return Array.from(intersection)
+    .map(key => canonical.get(key) || key)
+    .sort((a, b)=> a.localeCompare(b, undefined, {sensitivity: 'base'}));
+}
+
+function collectShowOperatorMap(show){
+  const map = new Map();
+  const entries = Array.isArray(show?.entries) ? show.entries : [];
+  entries.forEach(entry => {
+    const name = typeof entry?.operator === 'string' ? entry.operator.trim() : '';
+    if(!name){
+      return;
+    }
+    const key = name.toLowerCase();
+    if(!map.has(key)){
+      map.set(key, name);
+    }
+  });
+  return map;
+}
+
+function showIncludesOperator(show, operatorKey){
+  if(!operatorKey){
+    return true;
+  }
+  const lookup = collectShowOperatorMap(show);
+  return lookup.has(operatorKey);
 }
 
 function parseFilterDate(value, endOfDay){
@@ -1691,9 +1732,9 @@ function getSelectedArchiveChartShows(){
   }
   const selectedIds = new Set(Array.isArray(state.selectedArchiveChartShows) ? state.selectedArchiveChartShows : []);
   const selected = allShows.filter(show => selectedIds.has(show.id));
-  const pilotFiltered = getFilteredArchivedShows(selected, {includeDateFilter: false});
-  pilotFiltered.sort((a, b)=> (getShowTimestamp(a) ?? 0) - (getShowTimestamp(b) ?? 0));
-  return pilotFiltered;
+  const operatorFiltered = getFilteredArchivedShows(selected, {includeDateFilter: false});
+  operatorFiltered.sort((a, b)=> (getShowTimestamp(a) ?? 0) - (getShowTimestamp(b) ?? 0));
+  return operatorFiltered;
 }
 
 function buildArchiveChartData(shows, metrics){

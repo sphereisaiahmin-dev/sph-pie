@@ -57,6 +57,25 @@ function toBoolean(value){
   return Boolean(value);
 }
 
+function toYesNoBoolean(value){
+  if(typeof value === 'string'){
+    const normalized = value.trim().toLowerCase();
+    if(normalized === 'yes'){
+      return true;
+    }
+    if(normalized === 'no'){
+      return false;
+    }
+  }
+  if(typeof value === 'boolean'){
+    return value;
+  }
+  if(typeof value === 'number'){
+    return Number.isFinite(value) ? value !== 0 : false;
+  }
+  return false;
+}
+
 function normalizeTimeoutMs(value){
   const parsed = Number(value);
   if(Number.isFinite(parsed) && parsed > 0){
@@ -293,6 +312,23 @@ function buildMessagePayload(rowObject = {}){
   }, {});
 }
 
+function buildArchiveEntryPayload(show = {}, entry = {}){
+  return {
+    showDate: show?.date || '',
+    showTime: show?.time || '',
+    showNumber: show?.label || '',
+    leadPilot: show?.leadPilot || '',
+    monkeyLead: show?.monkeyLead || '',
+    operator: entry?.operator || '',
+    monkeyId: entry?.unitId || '',
+    planned: toYesNoBoolean(entry?.planned),
+    launched: toYesNoBoolean(entry?.launched),
+    commandReceived: toYesNoBoolean(entry?.commandRx),
+    primaryIssue: entry?.primaryIssue || '',
+    subIssue: entry?.subIssue || ''
+  };
+}
+
 function csvEscape(value){
   const str = value === null || value === undefined ? '' : String(value);
   if(str.includes('"') || str.includes(',') || /[\n\r]/.test(str)){
@@ -480,6 +516,42 @@ async function dispatchShowEvent(event, show, meta){
     crew: Array.isArray(show?.crew) ? show.crew : [],
     entries: normalizeEntryList(show)
   };
+  if(event === 'show.archived'){
+    const entryList = normalizedShow.entries;
+    if(!entryList.length){
+      console.info(`[webhook] ${event} for show ${normalizedShow.id || '(unknown)'} has no operator entries to dispatch.`);
+      return {success: true, dispatched: 0, failed: 0, total: 0, results: []};
+    }
+
+    const perEntryResults = [];
+    for(const entry of entryList){
+      const payload = buildArchiveEntryPayload(normalizedShow, entry);
+      const sendMeta = {
+        event,
+        kind: 'show-archive-entry',
+        showId: normalizedShow.id || null,
+        entryId: entry?.id || null
+      };
+      const dispatchResult = await sendWebhookPayload(payload, sendMeta);
+      perEntryResults.push({
+        ...dispatchResult,
+        entryId: entry?.id || null
+      });
+    }
+
+    const failures = perEntryResults.filter(result => result?.success === false);
+    const summary = {
+      success: failures.length === 0,
+      dispatched: perEntryResults.filter(result => result?.success !== false).length,
+      failed: failures.length,
+      total: entryList.length,
+      results: perEntryResults
+    };
+    if(failures.length){
+      summary.error = 'One or more operator entry payloads failed to dispatch';
+    }
+    return summary;
+  }
   const showSummary = buildShowSummary(normalizedShow);
   const tableRows = normalizedShow.entries.map(entry => buildTableRow(normalizedShow, entry));
   const payload = {

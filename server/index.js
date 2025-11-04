@@ -213,33 +213,85 @@ async function bootstrap(){
     }
 
     const limitedShows = shows.slice(0, 90);
-    const requested = limitedShows.length;
     const requestedAt = new Date().toISOString();
+    const SHOW_LIMIT = 3;
+    const ENTRY_LIMIT = 6;
+    const selectedShows = [];
+    const entryLimitErrors = [];
+
+    for(let index = 0; index < limitedShows.length && selectedShows.length < SHOW_LIMIT; index += 1){
+      const show = limitedShows[index];
+      const entries = Array.isArray(show?.entries) ? show.entries : [];
+      if(entries.length < ENTRY_LIMIT){
+        entryLimitErrors.push({
+          showId: show?.id || null,
+          error: `Show requires at least ${ENTRY_LIMIT} operator entries for simulation`
+        });
+        continue;
+      }
+      selectedShows.push({
+        ...show,
+        entries: entries.slice(0, ENTRY_LIMIT)
+      });
+    }
+
+    const requested = selectedShows.length;
+    if(requested === 0){
+      res.json({
+        requested: 0,
+        dispatched: 0,
+        skipped: 0,
+        errors: entryLimitErrors,
+        webhook: getWebhookStatus()
+      });
+      return;
+    }
+
     let dispatched = 0;
     let skipped = 0;
-    const errors = [];
-    for(let index = 0; index < limitedShows.length; index += 1){
-      const show = limitedShows[index];
+    let entryPayloads = 0;
+    let entryFailures = 0;
+    const errors = requested < SHOW_LIMIT ? [...entryLimitErrors] : [];
+
+    for(let index = 0; index < selectedShows.length; index += 1){
+      const show = selectedShows[index];
       const meta = {
         simulation: {
           source: 'admin-settings',
           requestedAt,
           showIndex: index,
-          totalShows: requested,
-          rangeDays: 30
+          totalShows: selectedShows.length,
+          rangeDays: 30,
+          entryLimit: ENTRY_LIMIT
         }
       };
       const result = await dispatchShowEvent('show.archived', show, meta);
       if(result?.skipped){
         skipped += 1;
-      }else if(result?.success === false){
-        errors.push({showId: show?.id || null, error: result.error});
+        continue;
+      }
+      entryPayloads += Number(result?.dispatched || 0);
+      entryFailures += Number(result?.failed || 0);
+      if(result?.success === false){
+        errors.push({
+          showId: show?.id || null,
+          error: result.error || 'Unknown dispatch error',
+          failedEntries: Number.isFinite(result?.failed) ? result.failed : undefined
+        });
       }else{
         dispatched += 1;
       }
     }
 
-    res.json({requested, dispatched, skipped, errors, webhook: getWebhookStatus()});
+    res.json({
+      requested,
+      dispatched,
+      skipped,
+      entryPayloads,
+      entryFailures,
+      errors,
+      webhook: getWebhookStatus()
+    });
   }));
 
   app.post('/api/shows/:id/entries', asyncHandler(async (req, res)=>{

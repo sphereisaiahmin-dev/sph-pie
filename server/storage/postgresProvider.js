@@ -1,6 +1,8 @@
 const { Pool } = require('pg');
 const { v4: uuidv4 } = require('uuid');
 
+const { dispatchShowEvent } = require('../webhookDispatcher');
+
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
 const ARCHIVE_RETENTION_MONTHS = 2;
 const DEFAULT_PILOTS = ['Alex','Nick','John Henery','James','Robert','Nazar'];
@@ -529,7 +531,7 @@ class PostgresProvider {
     });
     const now = Date.now();
     const showsToArchive = [];
-    for(const [, list] of groups.entries()){
+    for(const list of groups.values()){
       const earliest = list.reduce((min, item)=>{
         const value = this._getTimestamp(item.createdAt);
         if(value === null){
@@ -550,15 +552,68 @@ class PostgresProvider {
     if(!showsToArchive.length){
       return false;
     }
+    const archivedShows = [];
     await this._withClient(async client =>{
       for(const show of showsToArchive){
         const normalized = this._normalizeShow(show);
         const archiveTime = Date.now();
         await this._saveArchiveRow(normalized, archiveTime, null, client);
         await client.query(`DELETE FROM ${showsTable} WHERE id = $1`, [normalized.id]);
+        const prepared = this._prepareArchivedShowForDispatch(normalized);
+        if(prepared){
+          archivedShows.push(prepared);
+        }
       }
     });
+    if(archivedShows.length){
+      await this._dispatchArchivedShows(archivedShows);
+    }
     return true;
+  }
+
+  _prepareArchivedShowForDispatch(show){
+    if(!show || typeof show !== 'object'){
+      return null;
+    }
+    const entries = Array.isArray(show.entries)
+      ? show.entries.map(entry => ({
+        ...entry,
+        actions: Array.isArray(entry?.actions) ? [...entry.actions] : []
+      }))
+      : [];
+    return {
+      ...show,
+      entries
+    };
+  }
+
+  async _dispatchArchivedShows(shows){
+    if(!Array.isArray(shows) || !shows.length){
+      return;
+    }
+    const triggeredAt = new Date().toISOString();
+    const totalShows = shows.length;
+    for(let index = 0; index < totalShows; index += 1){
+      const show = shows[index];
+      if(!show){
+        continue;
+      }
+      const meta = {
+        automation: {
+          source: 'daily-archive',
+          triggeredAt,
+          totalShows,
+          showIndex: index,
+          showId: show.id || null
+        }
+      };
+      try{
+        await dispatchShowEvent('show.archived', show, meta);
+      }catch(err){
+        const label = show?.id || '(unknown)';
+        console.error(`[postgresProvider] Failed to dispatch archive webhook for show ${label}`, err);
+      }
+    }
   }
 
   async _purgeExpiredArchives(){

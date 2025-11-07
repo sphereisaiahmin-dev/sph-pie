@@ -2164,7 +2164,7 @@ function renderArchiveDetails(show){
   if(!show){
     archiveDetails.innerHTML = '<p class="help">Select an archived show to review its summary.</p>';
     if(archiveMeta){
-      archiveMeta.textContent = 'Shows move here automatically 24 hours after creation and remain for two months.';
+      archiveMeta.textContent = 'Shows move here automatically 12 hours after creation and remain for two months.';
     }
     if(archiveEmpty){
       archiveEmpty.hidden = !(Array.isArray(state.archivedShows) && state.archivedShows.length === 0);

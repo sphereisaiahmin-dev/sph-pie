@@ -3,7 +3,7 @@ const express = require('express');
 const morgan = require('morgan');
 const { loadConfig, saveConfig } = require('./configStore');
 const { initProvider, getProvider } = require('./storage');
-const { setWebhookConfig, getWebhookStatus, dispatchEntryEvent, dispatchShowEvent } = require('./webhookDispatcher');
+const { setWebhookConfig, getWebhookStatus, dispatchShowEvent } = require('./webhookDispatcher');
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
 
@@ -301,8 +301,6 @@ async function bootstrap(){
       res.status(404).json({error: 'Show not found'});
       return;
     }
-    const show = await provider.getShow(req.params.id);
-    await dispatchEntryEvent('entry.created', show, entry);
     res.status(201).json(entry);
   }));
 
@@ -313,8 +311,6 @@ async function bootstrap(){
       res.status(404).json({error: 'Entry not found'});
       return;
     }
-    const show = await provider.getShow(req.params.id);
-    await dispatchEntryEvent('entry.updated', show, entry);
     res.json(entry);
   }));
 

@@ -3,7 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 
 const { dispatchShowEvent } = require('../webhookDispatcher');
 
-const DAY_IN_MS = 24 * 60 * 60 * 1000;
+const AUTO_ARCHIVE_WINDOW_MS = 12 * 60 * 60 * 1000;
 const ARCHIVE_RETENTION_MONTHS = 2;
 const DEFAULT_PILOTS = ['Alex','Nick','John Henery','James','Robert','Nazar'];
 const DEFAULT_CREW = ['Alex','Nick','John Henery','James','Robert','Nazar'];
@@ -545,7 +545,7 @@ class PostgresProvider {
       if(earliest === null){
         continue;
       }
-      if(now - earliest >= DAY_IN_MS){
+      if(now - earliest >= AUTO_ARCHIVE_WINDOW_MS){
         list.forEach(item => showsToArchive.push(item.show));
       }
     }

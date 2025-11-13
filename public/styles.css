@@ -78,20 +78,24 @@ a{color:var(--primary);text-decoration:none}
 #roleHome{display:none}
 body.view-lead #roleHome,
 body.view-operator #roleHome,
-body.view-archive #roleHome{display:inline-flex}
+body.view-archive #roleHome,
+body.view-admin #roleHome{display:inline-flex}
 #viewBadge{display:none}
 body.view-lead #viewBadge,
 body.view-operator #viewBadge,
-body.view-archive #viewBadge{display:inline-flex}
+body.view-archive #viewBadge,
+body.view-admin #viewBadge{display:inline-flex}
 body.view-landing #refreshShows{display:none}
 .view-lead-only,
 .view-operator-only,
 .view-landing-only,
-.view-archive-only{display:none !important}
+.view-archive-only,
+.view-admin-only{display:none !important}
 body.view-lead .view-lead-only{display:block !important}
 body.view-operator .view-operator-only{display:block !important}
 body.view-landing .view-landing-only{display:block !important}
 body.view-archive .view-archive-only{display:block !important}
+body.view-admin .view-admin-only{display:block !important}
 #landingView{display:none;text-align:center;padding:38px 20px}
 body.view-landing #landingView{display:block}
 .role-options{

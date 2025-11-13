@@ -157,6 +157,10 @@ const state = {
     leads: []
   },
   users: [],
+  userFilters: {
+    query: '',
+    role: ''
+  },
   defaultTempPassword: 'adminsphere1'
 };
 
@@ -172,6 +176,7 @@ let archiveChartInstance = null;
 let uiInitialized = false;
 
 const SYNC_CHANNEL_NAME = 'monkey-tracker-sync';
+const IDLE_LOGOUT_MS = 5 * 60 * 1000;
 
 const appTitle = el('appTitle');
 const loginScreen = el('loginScreen');
@@ -199,6 +204,12 @@ const userEmailInput = el('userEmail');
 const userFormStatus = el('userFormStatus');
 const userFormCancelBtn = el('userFormCancel');
 const userFormSubmitBtn = el('userFormSubmit');
+const newUserBtn = el('newUserBtn');
+const userSearchInput = el('userSearch');
+const userRoleFilter = el('userRoleFilter');
+const userModal = el('userModal');
+const closeUserModalBtn = el('closeUserModal');
+const userModalTitle = el('userModalTitle');
 const unitLabelEl = el('unitLabel');
 const showDate = el('showDate');
 const showTime = el('showTime');
@@ -226,6 +237,9 @@ const batteryId = el('batteryId');
 const delaySec = el('delaySec');
 const commandRx = el('commandRx');
 const entryNotes = el('entryNotes');
+const addLineBtn = el('addLine');
+const operatorDisplay = el('operatorDisplay');
+const operatorEntryNotice = el('operatorEntryNotice');
 const groupsContainer = el('groups');
 const issueBlocks = qsa('.issue-block');
 const toastEl = el('toast');
@@ -236,6 +250,10 @@ const configPanel = el('configPanel');
 const cancelConfigBtn = el('cancelConfig');
 const configForm = el('configForm');
 const configMessage = el('configMessage');
+const menuUserName = el('menuUserName');
+const menuUserEmail = el('menuUserEmail');
+const menuUserRoles = el('menuUserRoles');
+const menuDateTime = el('menuDateTime');
 const configNavButtons = qsa('[data-config-target]');
 const adminWorkspaceNavBtn = el('adminWorkspaceNav');
 const configSections = qsa('[data-config-section]');
@@ -254,6 +272,7 @@ const webhookForm = el('webhookForm');
 const webhookCancelBtn = el('webhookCancel');
 const roleHomeBtn = el('roleHome');
 const viewBadge = el('viewBadge');
+const welcomeBanner = el('welcomeBanner');
 const chooseLeadBtn = el('chooseLead');
 const chooseOperatorBtn = el('chooseOperator');
 const chooseArchiveBtn = el('chooseArchive');
@@ -293,6 +312,12 @@ const lanAddressEl = el('lanAddress');
 
 let currentConfigSection = 'admin';
 let webhookModalSnapshot = null;
+let idleTimerId = null;
+let idleListenersRegistered = false;
+let unloadHandlerRegistered = false;
+let suppressUnloadLogout = false;
+let menuClockInterval = null;
+const addLineBtnDefaultText = addLineBtn ? addLineBtn.textContent : 'Add line';
 
 if(configPanel){
   configPanel.setAttribute('aria-hidden', 'true');
@@ -353,7 +378,10 @@ function initAuthUI(){
     userDirectoryEl.addEventListener('click', onUserDirectoryClick);
   }
   if(userFormCancelBtn){
-    userFormCancelBtn.addEventListener('click', resetUserForm);
+    userFormCancelBtn.addEventListener('click', event=>{
+      event.preventDefault();
+      resetUserForm();
+    });
   }
   if(userFormSubmitBtn){
     userFormSubmitBtn.addEventListener('click', onUserFormSubmit);
@@ -361,6 +389,9 @@ function initAuthUI(){
   if(userForm){
     userForm.addEventListener('keydown', handleUserFormKeydown);
   }
+  setupIdleActivityTracking();
+  setupUnloadLogoutHandler();
+  startMenuClock();
 }
 
 async function refreshSession(){
@@ -387,6 +418,7 @@ async function handleSessionAuthenticated(user){
     state.users = [];
   }
   updateSessionUi();
+  resetIdleTimer();
   if(state.session?.needsPasswordReset){
     clearPasswordResetForm();
     showPasswordResetScreen();
@@ -400,6 +432,7 @@ async function handleSessionAuthenticated(user){
 }
 
 function showLoginScreen(){
+  clearIdleTimer();
   if(loginScreen){
     loginScreen.hidden = false;
   }
@@ -445,6 +478,35 @@ function updateSessionUi(){
       sessionUserEl.hidden = true;
     }
   }
+  if(menuUserName){
+    if(state.session){
+      menuUserName.textContent = state.session.name || state.session.email || 'Account';
+      if(menuUserEmail){
+        menuUserEmail.textContent = state.session.email || '';
+      }
+      if(menuUserRoles){
+        const rolesText = formatRoleList(state.session.roles || []);
+        menuUserRoles.textContent = rolesText ? `Roles: ${rolesText}` : '';
+      }
+    }else{
+      menuUserName.textContent = 'Not signed in';
+      if(menuUserEmail){
+        menuUserEmail.textContent = '';
+      }
+      if(menuUserRoles){
+        menuUserRoles.textContent = '';
+      }
+    }
+  }
+  if(welcomeBanner){
+    const firstName = getSessionFirstName();
+    if(firstName){
+      welcomeBanner.textContent = `Welcome, ${firstName}`;
+      welcomeBanner.hidden = false;
+    }else{
+      welcomeBanner.hidden = true;
+    }
+  }
   if(configBtn){
     configBtn.hidden = false;
     configBtn.disabled = false;
@@ -463,6 +525,7 @@ function updateSessionUi(){
     userDirectoryEl.innerHTML = '<p class="help">Admin access required.</p>';
   }
   updateWorkspaceAvailability();
+  syncOperatorIdentity();
 }
 
 function formatRoleList(roles = []){
@@ -470,6 +533,17 @@ function formatRoleList(roles = []){
     return '';
   }
   return roles.map(role => role.charAt(0).toUpperCase() + role.slice(1)).join(', ');
+}
+
+function getSessionFirstName(){
+  const full = typeof state.session?.name === 'string' && state.session.name.trim()
+    ? state.session.name.trim()
+    : (typeof state.session?.email === 'string' ? state.session.email.trim() : '');
+  if(!full){
+    return '';
+  }
+  const [first] = full.split(/\s+/);
+  return first || '';
 }
 
 function updateWorkspaceAvailability(){
@@ -563,6 +637,8 @@ async function onPasswordResetSubmit(event){
 }
 
 async function logout(){
+  suppressUnloadLogout = true;
+  clearIdleTimer();
   try{
     await apiRequest('/api/auth/logout', {method: 'POST', skipAuthHandlers: true});
   }catch(err){
@@ -580,6 +656,7 @@ function clearPasswordResetForm(){
 }
 
 function handleSessionExpired(){
+  clearIdleTimer();
   state.session = null;
   state.appReady = false;
   state.users = [];
@@ -636,6 +713,13 @@ function renderUserDirectory(){
   if(!userDirectoryEl){
     return;
   }
+  const filters = state.userFilters || {query: '', role: ''};
+  if(userSearchInput && userSearchInput.value !== (filters.query || '')){
+    userSearchInput.value = filters.query || '';
+  }
+  if(userRoleFilter && userRoleFilter.value !== (filters.role || '')){
+    userRoleFilter.value = filters.role || '';
+  }
   if(!isAdmin()){
     userDirectoryEl.innerHTML = '<p class="help">Admin access required.</p>';
     return;
@@ -645,7 +729,21 @@ function renderUserDirectory(){
     userDirectoryEl.innerHTML = '<p class="help">No user accounts yet.</p>';
     return;
   }
-  const rows = users.map(user =>{
+  const query = (filters.query || '').toLowerCase();
+  const roleFilter = filters.role || '';
+  const filtered = users.filter(user =>{
+    const name = (user.name || '').toLowerCase();
+    const email = (user.email || '').toLowerCase();
+    const matchesQuery = !query || name.includes(query) || email.includes(query);
+    const roles = Array.isArray(user.roles) ? user.roles : [];
+    const matchesRole = !roleFilter || roles.includes(roleFilter);
+    return matchesQuery && matchesRole;
+  });
+  if(!filtered.length){
+    userDirectoryEl.innerHTML = '<p class="help">No users match your filters.</p>';
+    return;
+  }
+  const rows = filtered.map(user =>{
     const roles = formatRoleList(user.roles || []);
     const resetBadge = user.needsPasswordReset ? '<span class="badge warn">Reset required</span>' : '';
     return `<div class="user-row">
@@ -691,13 +789,15 @@ function startUserEdit(userId){
   roleInputs.forEach(input =>{
     input.checked = Array.isArray(user.roles) ? user.roles.includes(input.value) : false;
   });
+  openUserModal('edit', user.name || user.email || 'user');
   if(userFormStatus){
     userFormStatus.textContent = 'Editing existing user';
     userFormStatus.classList.remove('error');
   }
 }
 
-function resetUserForm(){
+function resetUserForm(options = {}){
+  const {closeModal = true} = options;
   if(!userForm){
     return;
   }
@@ -710,6 +810,57 @@ function resetUserForm(){
     userFormStatus.textContent = '';
     userFormStatus.classList.remove('error');
   }
+  if(closeModal){
+    closeUserModal();
+  }
+}
+
+function onNewUserClick(){
+  if(!isAdmin()){
+    toast('Admin access required', true);
+    return;
+  }
+  resetUserForm({closeModal: false});
+  if(userFormStatus){
+    userFormStatus.textContent = 'Create new user';
+    userFormStatus.classList.remove('error');
+  }
+  openUserModal('create');
+}
+
+function onUserSearchInput(){
+  if(!isAdmin()){
+    return;
+  }
+  state.userFilters.query = userSearchInput?.value ? userSearchInput.value.trim() : '';
+  renderUserDirectory();
+}
+
+function onUserRoleFilterChange(){
+  if(!isAdmin()){
+    return;
+  }
+  state.userFilters.role = userRoleFilter?.value || '';
+  renderUserDirectory();
+}
+
+function openUserModal(mode = 'create', userName = ''){
+  if(!userModal){
+    return;
+  }
+  if(userModalTitle){
+    userModalTitle.textContent = mode === 'edit' && userName ? `Edit ${userName}` : 'Add user';
+  }
+  userModal.classList.add('open');
+  userModal.setAttribute('aria-hidden', 'false');
+}
+
+function closeUserModal(){
+  if(!userModal){
+    return;
+  }
+  userModal.classList.remove('open');
+  userModal.setAttribute('aria-hidden', 'true');
 }
 
 function getSelectedUserRoles(){
@@ -819,7 +970,6 @@ function initUI(){
     monkeyLeadSelect.addEventListener('change', ()=> handleShowHeaderChange('monkeyLead', monkeyLeadSelect.value));
   }
 
-  const addLineBtn = el('addLine');
   if(newShowBtn){ newShowBtn.addEventListener('click', onNewShow); }
   if(addLineBtn){ addLineBtn.addEventListener('click', onAddLine); }
 
@@ -887,6 +1037,25 @@ function initUI(){
   }
   if(roleHomeBtn){
     roleHomeBtn.addEventListener('click', ()=> setView('landing'));
+  }
+  if(newUserBtn){
+    newUserBtn.addEventListener('click', onNewUserClick);
+  }
+  if(closeUserModalBtn){
+    closeUserModalBtn.addEventListener('click', closeUserModal);
+  }
+  if(userModal){
+    userModal.addEventListener('click', event=>{
+      if(event.target === userModal){
+        closeUserModal();
+      }
+    });
+  }
+  if(userSearchInput){
+    userSearchInput.addEventListener('input', onUserSearchInput);
+  }
+  if(userRoleFilter){
+    userRoleFilter.addEventListener('change', onUserRoleFilterChange);
   }
 
   el('closeEdit').addEventListener('click', closeEditModal);
@@ -1351,6 +1520,7 @@ function setCurrentShow(showId, options = {}){
   }else{
     updateOperatorSummary();
   }
+  updateOperatorEntryState();
 }
 
 function syncOperatorShowSelect(){
@@ -1364,6 +1534,7 @@ function syncOperatorShowSelect(){
     entryShowSelect.disabled = true;
     entryShowSelect.value = '';
     updateOperatorSummary();
+    updateOperatorEntryState();
     return;
   }
   entryShowSelect.disabled = false;
@@ -1380,6 +1551,7 @@ function syncOperatorShowSelect(){
     setCurrentShow(selectedId, {skipOperatorSync: true});
   }else{
     updateOperatorSummary();
+    updateOperatorEntryState();
   }
 }
 
@@ -3452,6 +3624,21 @@ async function onAddLine(){
     toast('Select or create a show first', true);
     return;
   }
+  const operatorName = getOperatorIdentity();
+  if(operator){
+    operator.value = operatorName;
+  }
+  if(!operatorName){
+    showError('errOperator');
+    toast('Operator credentials missing. Please sign in again.', true);
+    updateOperatorEntryState();
+    return;
+  }
+  if(operatorHasEntry(show, operatorName)){
+    toast('You already submitted an entry for this show.', true);
+    updateOperatorEntryState();
+    return;
+  }
   clearErrors();
   let ok = true;
   if(!show.date){ showError('errDate'); ok=false; }
@@ -3487,7 +3674,7 @@ async function onAddLine(){
     severity: st === 'Completed' ? '' : (severity.value || ''),
     rootCause: st === 'Completed' ? '' : (rootCause.value || ''),
     actions: st === 'Completed' ? [] : getSelectedActions(actionsChips),
-    operator: operator.value || '',
+    operator: operatorName || '',
     batteryId: batteryId.value.trim(),
     delaySec: delaySec.value ? Number(delaySec.value) : null,
     commandRx: commandRx.value || '',
@@ -3519,12 +3706,12 @@ function clearEntryForm(){
   severity.value = '';
   rootCause.value = '';
   renderActionsChips(actionsChips, []);
-  operator.value = '';
   batteryId.value = '';
   delaySec.value = '';
   commandRx.value = '';
   entryNotes.value = '';
   updateIssueVisibility();
+  syncOperatorIdentity();
 }
 
 function renderGroups(){
@@ -3987,28 +4174,81 @@ function pillGet(formRoot){
 }
 
 function renderOperatorOptions(){
+  syncOperatorIdentity();
+}
+
+function getOperatorIdentity(){
+  if(!state.session){
+    return '';
+  }
+  const name = typeof state.session.name === 'string' ? state.session.name.trim() : '';
+  if(name){
+    return name;
+  }
+  return typeof state.session.email === 'string' ? state.session.email.trim() : '';
+}
+
+function syncOperatorIdentity(){
   if(!operator){
     return;
   }
-  const current = operator.value;
-  const names = getOperatorNames([current]);
-  if(!names.length){
-    operator.innerHTML = '<option value="">Add operators via admin settings</option>';
-    operator.value = '';
-    operator.disabled = true;
+  const identity = getOperatorIdentity();
+  operator.value = identity;
+  if(operatorDisplay){
+    operatorDisplay.value = identity || '';
+  }
+  updateOperatorEntryState();
+}
+
+function operatorHasEntry(show, operatorName){
+  if(!show || !operatorName){
+    return false;
+  }
+  const normalized = operatorName.trim().toLowerCase();
+  if(!normalized){
+    return false;
+  }
+  return Array.isArray(show.entries) && show.entries.some(entry =>{
+    if(!entry){
+      return false;
+    }
+    const existing = typeof entry.operator === 'string' ? entry.operator.trim().toLowerCase() : '';
+    return existing === normalized;
+  });
+}
+
+function updateOperatorEntryState(){
+  if(!addLineBtn){
     return;
   }
-  operator.disabled = false;
-  const options = [''].concat(names).map(name=>{
-    if(!name){
-      return '<option value="">Select</option>';
+  if(state.currentView !== 'operator'){
+    addLineBtn.disabled = false;
+    addLineBtn.textContent = addLineBtnDefaultText;
+    if(operatorEntryNotice){
+      operatorEntryNotice.hidden = true;
     }
-    return `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
-  }).join('');
-  operator.innerHTML = options;
-  const currentLower = current ? current.toLowerCase() : '';
-  const match = names.find(name => name.toLowerCase() === currentLower);
-  operator.value = match || '';
+    return;
+  }
+  const show = getCurrentShow();
+  const identity = getOperatorIdentity();
+  let message = '';
+  let disabled = false;
+  if(!identity){
+    disabled = true;
+    message = 'Sign in again to log entries.';
+  }else if(!show){
+    disabled = true;
+    message = 'Lead must create a show before logging entries.';
+  }else if(operatorHasEntry(show, identity)){
+    disabled = true;
+    message = 'You already submitted an entry for this show.';
+  }
+  addLineBtn.disabled = disabled;
+  addLineBtn.textContent = disabled ? 'Entry locked' : addLineBtnDefaultText;
+  if(operatorEntryNotice){
+    operatorEntryNotice.textContent = message;
+    operatorEntryNotice.hidden = !message;
+  }
 }
 
 function setView(view){
@@ -4033,24 +4273,19 @@ function setView(view){
   document.body.classList.add(`view-${view}`);
   setConfigSection(view);
   if(viewBadge){
-    if(view === 'landing'){
-      viewBadge.hidden = true;
-      viewBadge.classList.remove('view-badge-operator');
+    viewBadge.hidden = false;
+    viewBadge.classList.remove('view-badge-operator');
+    if(view === 'operator'){
+      viewBadge.textContent = 'Operator workspace';
+      viewBadge.classList.add('view-badge-operator');
+    }else if(view === 'archive'){
+      viewBadge.textContent = 'Archive workspace';
+    }else if(view === 'admin'){
+      viewBadge.textContent = 'Admin workspace';
+    }else if(view === 'landing'){
+      viewBadge.textContent = 'Choose workspace';
     }else{
-      viewBadge.hidden = false;
-      if(view === 'operator'){
-        viewBadge.textContent = 'Operator workspace';
-        viewBadge.classList.add('view-badge-operator');
-      }else if(view === 'archive'){
-        viewBadge.textContent = 'Archive workspace';
-        viewBadge.classList.remove('view-badge-operator');
-      }else if(view === 'admin'){
-        viewBadge.textContent = 'Admin workspace';
-        viewBadge.classList.remove('view-badge-operator');
-      }else{
-        viewBadge.textContent = 'Lead workspace';
-        viewBadge.classList.remove('view-badge-operator');
-      }
+      viewBadge.textContent = 'Lead workspace';
     }
   }
   if(roleHomeBtn){
@@ -4070,6 +4305,7 @@ function setView(view){
   if(view === 'admin' && isAdmin()){
     loadUsers();
   }
+  updateOperatorEntryState();
 }
 
 function toggleConfig(force){
@@ -4807,6 +5043,105 @@ async function apiRequest(url, options){
     throw new Error(message);
   }
   return data;
+}
+
+function setupIdleActivityTracking(){
+  if(idleListenersRegistered){
+    return;
+  }
+  ['mousemove','keydown','mousedown','touchstart','scroll'].forEach(eventName =>{
+    document.addEventListener(eventName, handleIdleActivity, {passive: true});
+  });
+  document.addEventListener('visibilitychange', handleIdleVisibilityChange);
+  idleListenersRegistered = true;
+}
+
+function handleIdleActivity(){
+  resetIdleTimer();
+}
+
+function handleIdleVisibilityChange(){
+  if(document.visibilityState === 'visible'){
+    resetIdleTimer();
+  }
+}
+
+function resetIdleTimer(){
+  if(!state.session){
+    clearIdleTimer();
+    return;
+  }
+  clearIdleTimer();
+  idleTimerId = window.setTimeout(handleIdleLogout, IDLE_LOGOUT_MS);
+}
+
+function clearIdleTimer(){
+  if(idleTimerId){
+    clearTimeout(idleTimerId);
+    idleTimerId = null;
+  }
+}
+
+function handleIdleLogout(){
+  toast('Logging out due to inactivity');
+  logout();
+}
+
+function setupUnloadLogoutHandler(){
+  if(unloadHandlerRegistered){
+    return;
+  }
+  window.addEventListener('beforeunload', handleBeforeUnloadLogout);
+  unloadHandlerRegistered = true;
+}
+
+function handleBeforeUnloadLogout(){
+  if(suppressUnloadLogout || !state.session){
+    return;
+  }
+  sendLogoutBeacon();
+}
+
+function sendLogoutBeacon(){
+  try{
+    const body = new Blob([JSON.stringify({reason: 'unload'})], {type: 'application/json'});
+    if(typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function'){
+      navigator.sendBeacon('/api/auth/logout', body);
+      return;
+    }
+  }catch(err){
+    console.warn('Beacon setup failed', err);
+  }
+  if(typeof fetch === 'function'){
+    fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: '{}',
+      keepalive: true
+    }).catch(()=>{});
+  }
+}
+
+function startMenuClock(){
+  if(menuClockInterval){
+    return;
+  }
+  updateMenuClock();
+  menuClockInterval = window.setInterval(updateMenuClock, 1000);
+}
+
+function updateMenuClock(){
+  if(!menuDateTime){
+    return;
+  }
+  const now = new Date();
+  menuDateTime.textContent = now.toLocaleString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  });
 }
 
 

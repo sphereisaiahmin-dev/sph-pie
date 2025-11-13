@@ -448,7 +448,11 @@ async function bootstrap(){
 
   app.post('/api/shows/:id/entries', requireRoles('lead', 'operator'), asyncHandler(async (req, res)=>{
     const provider = getProvider();
-    const entry = await provider.addEntry(req.params.id, req.body || {});
+    const payload = {...(req.body || {})};
+    if(isOperatorOnly(req.user)){
+      payload.operator = req.user?.name || req.user?.email || '';
+    }
+    const entry = await provider.addEntry(req.params.id, payload);
     if(!entry){
       res.status(404).json({error: 'Show not found'});
       return;
@@ -516,6 +520,18 @@ async function bootstrap(){
   }
 
   startListening(boundHost);
+}
+
+function isOperatorOnly(user){
+  if(!user || !Array.isArray(user.roles)){
+    return false;
+  }
+  const elevated = new Set(['admin', 'lead']);
+  const roles = user.roles.map(role => typeof role === 'string' ? role.toLowerCase() : role);
+  if(!roles.includes('operator')){
+    return false;
+  }
+  return !roles.some(role => elevated.has(role));
 }
 
 function normalizeRolesInput(input){

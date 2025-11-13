@@ -291,7 +291,7 @@ class PostgresProvider {
       {key: 'time', label: 'Show start time'},
       {key: 'label', label: 'Show label'},
       {key: 'leadPilot', label: 'Lead pilot'},
-      {key: 'monkeyLead', label: 'Monkey lead'}
+      {key: 'monkeyLead', label: 'Crew lead'}
     ];
     required.forEach(field =>{
       const value = typeof raw[field.key] === 'string' ? raw[field.key].trim() : '';
@@ -884,7 +884,7 @@ class PostgresProvider {
     if(!poolConfig.connectionString && !poolConfig.host){
       poolConfig.host = '127.0.0.1';
       poolConfig.port = 5432;
-      poolConfig.database = 'monkey_tracker';
+      poolConfig.database = 'pie';
       poolConfig.user = 'postgres';
       poolConfig.password = cfg.password || 'postgres';
     }

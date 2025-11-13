@@ -1,7 +1,7 @@
 {
-  "name": "monkey-tracker",
+  "name": "production-information-environment",
   "version": "1.0.0",
-  "description": "monkey tracker webgui",
+  "description": "Production Information Environment web platform",
   "main": "server/index.js",
   "scripts": {
     "test": "echo \"No automated tests configured\"",

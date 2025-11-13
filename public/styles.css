@@ -85,20 +85,27 @@ body.view-lead #viewBadge,
 body.view-operator #viewBadge,
 body.view-archive #viewBadge,
 body.view-admin #viewBadge,
-body.view-landing #viewBadge{display:inline-flex}
+body.view-landing #viewBadge,
+body.view-discipline #viewBadge,
+body.view-workspace #viewBadge{display:inline-flex}
 body.view-landing #refreshShows{display:none}
 .view-lead-only,
 .view-operator-only,
 .view-landing-only,
 .view-archive-only,
-.view-admin-only{display:none !important}
+.view-admin-only,
+.view-discipline-only,
+.view-workspace-only{display:none !important}
 body.view-lead .view-lead-only{display:block !important}
 body.view-operator .view-operator-only{display:block !important}
 body.view-landing .view-landing-only{display:block !important}
 body.view-archive .view-archive-only{display:block !important}
 body.view-admin .view-admin-only{display:block !important}
+body.view-discipline .view-discipline-only{display:block !important}
+body.view-workspace .view-workspace-only{display:block !important}
 #landingView{display:none;text-align:center;padding:38px 20px}
 body.view-landing #landingView{display:block}
+.discipline-options,
 .role-options{
   display:flex;
   flex-direction:column;
@@ -113,6 +120,11 @@ body.view-landing #landingView{display:block}
   box-shadow:0 20px 40px rgba(0,0,0,.28);
   backdrop-filter:blur(6px);
   width:min(100%, 480px);
+}
+.discipline-options{
+  flex-direction:row;
+  flex-wrap:wrap;
+  width:min(100%, 640px);
 }
 .role-options-main,
 .role-options-archive{
@@ -130,6 +142,32 @@ body.view-landing #landingView{display:block}
 .role-options-archive .role-btn{
   flex:1 1 220px;
   max-width:320px;
+}
+.user-role-grid{
+  display:grid;
+  gap:16px;
+  grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));
+}
+.user-role-group{
+  background:rgba(14,16,22,.5);
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:12px;
+  padding:12px 16px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.user-role-group h4{
+  margin:0;
+  font-size:16px;
+}
+.user-role-group label{
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.user-role-group label input[type="checkbox"]{
+  transform:scale(1.1);
 }
 .welcome-banner{
   font-size:12px;
@@ -862,6 +900,9 @@ input.is-invalid:focus, select.is-invalid:focus, textarea.is-invalid:focus{
   --btn-hover-bg:#2563eb;
   --btn-hover-border:#1d4ed8;
   --btn-hover-color:#f8faff;
+}
+.btn.role-btn.is-active{
+  box-shadow:0 0 0 2px rgba(255,255,255,.18);
 }
 .btn.role-btn.is-disabled{
   opacity:.45;

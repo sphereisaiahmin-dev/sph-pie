@@ -171,7 +171,7 @@ class StubPool{
 async function runScenario({label, databaseCreated, schema}){
   const state = {
     databaseCreated,
-    targetDatabase: 'monkey_tracker',
+    targetDatabase: 'pie',
     logs: [],
     staff: [],
     monkeyLeads: [],

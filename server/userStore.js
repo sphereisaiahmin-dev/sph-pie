@@ -3,33 +3,50 @@ const path = require('path');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 
+const {
+  DISCIPLINES,
+  ROLE_LEVELS,
+  DEFAULT_DISCIPLINE,
+  listRoleKeys,
+  normalizeRole,
+  getRoleKey,
+  getDisplayName,
+  roleMatchesLevel,
+  roleMatchesDiscipline
+} = require('./disciplineConfig');
+
 const USERS_FILE = path.join(process.cwd(), 'data', 'users.json');
-const SUPPORTED_ROLES = ['admin', 'lead', 'operator', 'stagecrew'];
+const SUPPORTED_ROLES = ['admin', ...listRoleKeys()];
 const DEFAULT_TEMP_PASSWORD = 'adminsphere1';
 const SCRYPT_PARAMS = {N: 16384, r: 8, p: 1, keylen: 64};
 
+const DEFAULT_DISCIPLINE_ID = DEFAULT_DISCIPLINE?.id || 'drones';
+const DEFAULT_LEAD_ROLE = getRoleKey(DEFAULT_DISCIPLINE_ID, 'lead') || `${DEFAULT_DISCIPLINE_ID}.lead`;
+const DEFAULT_OPERATOR_ROLE = getRoleKey(DEFAULT_DISCIPLINE_ID, 'operator') || `${DEFAULT_DISCIPLINE_ID}.operator`;
+const DEFAULT_CREW_ROLE = getRoleKey(DEFAULT_DISCIPLINE_ID, 'crew') || `${DEFAULT_DISCIPLINE_ID}.crew`;
+
 const DEFAULT_USER_SEED = [
-  {name: 'Alex Brodnik', email: 'alexander.brodnik@thesphere.com', roles: ['lead', 'operator']},
-  {name: 'John Henry', email: 'john.henry@thesphere.com', roles: ['lead', 'operator']},
-  {name: 'James Johnson', email: 'james.johnson@thesphere.com', roles: ['lead', 'operator']},
-  {name: 'Nazar Vasylyk', email: 'nazar.vasylyk@thesphere.com', roles: ['lead', 'operator']},
-  {name: 'Nicholas Aquino', email: 'nicholas.aquino@thesphere.com', roles: ['lead', 'operator']},
-  {name: 'Robert Ontell', email: 'robert.ontell@thesphere.com', roles: ['lead', 'operator']},
-  {name: 'Ben Ellingson', email: 'benellingson@mac.com', roles: ['lead', 'operator']},
-  {name: 'Alaz Szabo', email: 'alanszabojr@me.com', roles: ['lead', 'operator']},
-  {name: 'John Graham', email: 'john@vigilantaerialsystems.com', roles: ['lead', 'operator']},
-  {name: 'Daniel Perrier', email: 'dnlperrier08@gmail.com', roles: ['lead', 'operator']},
-  {name: 'Jevin Williams', email: 'jevinwilliams@gmail.com', roles: ['lead', 'operator']},
-  {name: 'Gregory Ryan', email: 'gregorywryan@gmail.com', roles: ['lead', 'operator']},
-  {name: 'Jordan Schroeder', email: 'jtsschroeder7@gmail.com', roles: ['lead', 'operator']},
-  {name: 'Danny Szabo', email: 'dannyszabo@gmail.com', roles: ['lead', 'operator']},
-  {name: 'Ben Storick', email: 'bestorick@gmail.com', roles: ['lead', 'operator']},
+  {name: 'Alex Brodnik', email: 'alexander.brodnik@thesphere.com', roles: [DEFAULT_LEAD_ROLE, DEFAULT_OPERATOR_ROLE]},
+  {name: 'John Henry', email: 'john.henry@thesphere.com', roles: [DEFAULT_LEAD_ROLE, DEFAULT_OPERATOR_ROLE]},
+  {name: 'James Johnson', email: 'james.johnson@thesphere.com', roles: [DEFAULT_LEAD_ROLE, DEFAULT_OPERATOR_ROLE]},
+  {name: 'Nazar Vasylyk', email: 'nazar.vasylyk@thesphere.com', roles: [DEFAULT_LEAD_ROLE, DEFAULT_OPERATOR_ROLE]},
+  {name: 'Nicholas Aquino', email: 'nicholas.aquino@thesphere.com', roles: [DEFAULT_LEAD_ROLE, DEFAULT_OPERATOR_ROLE]},
+  {name: 'Robert Ontell', email: 'robert.ontell@thesphere.com', roles: [DEFAULT_LEAD_ROLE, DEFAULT_OPERATOR_ROLE]},
+  {name: 'Ben Ellingson', email: 'benellingson@mac.com', roles: [DEFAULT_LEAD_ROLE, DEFAULT_OPERATOR_ROLE]},
+  {name: 'Alaz Szabo', email: 'alanszabojr@me.com', roles: [DEFAULT_LEAD_ROLE, DEFAULT_OPERATOR_ROLE]},
+  {name: 'John Graham', email: 'john@vigilantaerialsystems.com', roles: [DEFAULT_LEAD_ROLE, DEFAULT_OPERATOR_ROLE]},
+  {name: 'Daniel Perrier', email: 'dnlperrier08@gmail.com', roles: [DEFAULT_LEAD_ROLE, DEFAULT_OPERATOR_ROLE]},
+  {name: 'Jevin Williams', email: 'jevinwilliams@gmail.com', roles: [DEFAULT_LEAD_ROLE, DEFAULT_OPERATOR_ROLE]},
+  {name: 'Gregory Ryan', email: 'gregorywryan@gmail.com', roles: [DEFAULT_LEAD_ROLE, DEFAULT_OPERATOR_ROLE]},
+  {name: 'Jordan Schroeder', email: 'jtsschroeder7@gmail.com', roles: [DEFAULT_LEAD_ROLE, DEFAULT_OPERATOR_ROLE]},
+  {name: 'Danny Szabo', email: 'dannyszabo@gmail.com', roles: [DEFAULT_LEAD_ROLE, DEFAULT_OPERATOR_ROLE]},
+  {name: 'Ben Storick', email: 'bestorick@gmail.com', roles: [DEFAULT_LEAD_ROLE, DEFAULT_OPERATOR_ROLE]},
   {name: 'Isaiah Mincher', email: 'isaiah.mincher@thesphere.com', roles: ['admin']},
   {name: 'Zach Harvest', email: 'zach.harvest@thesphere.com', roles: ['admin']},
-  {name: 'Bret Tuttle', email: 'bret.tuttle@thesphere.com', roles: ['stagecrew']},
-  {name: 'Cleo Kelley', email: 'cleo.kelley@thesphere.com', roles: ['stagecrew']},
-  {name: 'Dallas Howerton', email: 'dallas.howerton@thesphere.com', roles: ['stagecrew']},
-  {name: 'Daisy Serratos Gomez', email: 'daisy.serratosgomez@thesphere.com', roles: ['stagecrew']}
+  {name: 'Bret Tuttle', email: 'bret.tuttle@thesphere.com', roles: [DEFAULT_CREW_ROLE]},
+  {name: 'Cleo Kelley', email: 'cleo.kelley@thesphere.com', roles: [DEFAULT_CREW_ROLE]},
+  {name: 'Dallas Howerton', email: 'dallas.howerton@thesphere.com', roles: [DEFAULT_CREW_ROLE]},
+  {name: 'Daisy Serratos Gomez', email: 'daisy.serratosgomez@thesphere.com', roles: [DEFAULT_CREW_ROLE]}
 ];
 
 let userRecords = [];
@@ -151,10 +168,12 @@ function verifyPassword(record, password){
 
 function normalizeRoles(input){
   const set = new Set();
-  const roles = Array.isArray(input) ? input : (typeof input === 'string' ? input.split(',') : []);
+  const roles = Array.isArray(input)
+    ? input
+    : (typeof input === 'string' ? input.split(',') : []);
   roles.forEach(role =>{
-    const value = typeof role === 'string' ? role.trim().toLowerCase() : '';
-    if(SUPPORTED_ROLES.includes(value)){
+    const value = normalizeRole(typeof role === 'string' ? role : '');
+    if(value && SUPPORTED_ROLES.includes(value)){
       set.add(value);
     }
   });
@@ -170,11 +189,13 @@ function sanitizeName(name){
 }
 
 function sanitizeUser(record){
+  const roles = Array.isArray(record.roles) ? record.roles.slice() : [];
+  const sortedRoles = roles.sort((a, b)=> getDisplayName(a).localeCompare(getDisplayName(b), undefined, {sensitivity: 'base'}));
   return {
     id: record.id,
     name: record.name,
     email: record.email,
-    roles: record.roles.slice().sort(),
+    roles: sortedRoles,
     needsPasswordReset: Boolean(record.passwordResetRequired),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt
@@ -307,19 +328,19 @@ function validatePasswordStrength(password){
 }
 
 function getRoleDirectory(){
-  const leads = userRecords
-    .filter(user => user.roles.includes('lead'))
-    .map(user => user.name)
-    .sort((a, b)=> a.localeCompare(b, undefined, {sensitivity: 'base'}));
-  const operators = userRecords
-    .filter(user => user.roles.includes('operator'))
-    .map(user => user.name)
-    .sort((a, b)=> a.localeCompare(b, undefined, {sensitivity: 'base'}));
-  const stagecrew = userRecords
-    .filter(user => user.roles.includes('stagecrew'))
-    .map(user => user.name)
-    .sort((a, b)=> a.localeCompare(b, undefined, {sensitivity: 'base'}));
-  return {leads, operators, stagecrew};
+  const directory = {};
+  for(const discipline of DISCIPLINES){
+    const levels = {};
+    for(const level of ROLE_LEVELS){
+      const roleKey = getRoleKey(discipline.id, level);
+      levels[level] = userRecords
+        .filter(user => Array.isArray(user.roles) && user.roles.includes(roleKey))
+        .map(user => user.name)
+        .sort((a, b)=> a.localeCompare(b, undefined, {sensitivity: 'base'}));
+    }
+    directory[discipline.id] = levels;
+  }
+  return directory;
 }
 
 async function deleteUser(id){

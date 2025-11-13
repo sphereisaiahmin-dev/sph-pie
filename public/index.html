@@ -45,14 +45,24 @@
       <div class="toolbar config-header">
         <h2 id="configTitle">Workspace menu</h2>
       </div>
-      <nav class="config-nav" aria-label="Workspace shortcuts">
-        <button type="button" class="config-nav-btn" data-config-target="landing">Choose workspace</button>
-        <button type="button" class="config-nav-btn" data-config-target="admin" id="adminWorkspaceNav">Admin workspace</button>
-      </nav>
-      <p class="help">Use the shortcuts above to jump between views. Admin access is required to open the admin workspace.</p>
+      <div class="config-session-card">
+        <div class="config-session-user">
+          <strong id="menuUserName">Not signed in</strong>
+          <span id="menuUserEmail"></span>
+          <span id="menuUserRoles" class="help"></span>
+        </div>
+        <div class="config-session-time">
+          <span class="help">Current time</span>
+          <strong id="menuDateTime"></strong>
+        </div>
+      </div>
+      <p class="help">Use the menu controls to confirm your session and jump into the admin workspace when authorized.</p>
       <div class="config-actions row">
         <div class="grow"></div>
         <button type="button" id="cancelConfig" class="btn ghost">Close menu</button>
+      </div>
+      <div class="config-footer">
+        <button type="button" class="config-nav-btn" data-config-target="admin" id="adminWorkspaceNav">Admin workspace</button>
       </div>
     </aside>
 
@@ -79,6 +89,7 @@
           </div>
           <img src="./assets/Sphere%20Logo_RGB%20_White.png" alt="Sphere" class="app-logo" />
           <div class="topbar-title">
+            <div id="welcomeBanner" class="welcome-banner" hidden></div>
             <span id="viewBadge" class="view-badge">Lead workspace</span>
             <div class="title-stack">
               <h1 class="app-title">Flight Log Form</h1>
@@ -114,35 +125,28 @@
       <form id="configForm" class="config-form">
         <section class="config-section grid is-active" data-config-section="admin">
           <div class="col-12 admin-users-panel">
-            <h3 id="userAccountsTitle">User accounts</h3>
-            <p class="help">Admins manage the roster here. Workspace lists automatically sync to assigned roles.</p>
-            <div id="userDirectory" class="user-directory" aria-live="polite"></div>
-            <div id="userForm" class="user-form" role="form" aria-labelledby="userAccountsTitle">
-              <input type="hidden" id="userId" />
-              <div class="grid">
-                <div class="col-6">
-                  <label for="userName">Name</label>
-                  <input id="userName" type="text" required />
-                </div>
-                <div class="col-6">
-                  <label for="userEmail">Email</label>
-                  <input id="userEmail" type="email" required />
-                </div>
-                <fieldset class="col-12 role-checkboxes">
-                  <legend>Roles</legend>
-                  <label><input type="checkbox" value="lead" name="userRole" /> Lead</label>
-                  <label><input type="checkbox" value="operator" name="userRole" /> Operator</label>
-                  <label><input type="checkbox" value="stagecrew" name="userRole" /> Stagecrew</label>
-                  <label><input type="checkbox" value="admin" name="userRole" /> Admin</label>
-                </fieldset>
+            <div class="admin-users-header">
+              <div>
+                <h3 id="userAccountsTitle">User accounts</h3>
+                <p class="help">Admins manage the roster here. Workspace lists automatically sync to assigned roles.</p>
               </div>
-              <div class="row form-actions">
-                <button type="button" id="userFormCancel" class="btn ghost">Cancel</button>
-                <button type="button" id="userFormSubmit" class="btn primary">Save user</button>
+              <div class="admin-users-actions">
+                <button type="button" id="newUserBtn" class="btn ghost">Add user</button>
               </div>
-              <p class="help small">New accounts receive the temporary password <code>adminsphere1</code> and must update it on first login.</p>
-              <div id="userFormStatus" class="help" role="status"></div>
             </div>
+            <div class="user-directory-controls">
+              <label class="sr-only" for="userSearch">Search users</label>
+              <input type="search" id="userSearch" placeholder="Search name or email" />
+              <label class="sr-only" for="userRoleFilter">Filter by role</label>
+              <select id="userRoleFilter">
+                <option value="">All roles</option>
+                <option value="lead">Lead</option>
+                <option value="operator">Operator</option>
+                <option value="stagecrew">Stagecrew</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div id="userDirectory" class="user-directory" aria-live="polite"></div>
           </div>
           <div class="col-12">
             <label for="unitLabelSelect">Unit label</label>
@@ -367,8 +371,9 @@
           <div class="actions-chips" id="actionsChips" role="group" aria-label="Actions taken"></div>
         </div>
         <div class="col-3">
-          <label for="operator">Operator</label>
-          <select id="operator"></select>
+          <label for="operatorDisplay">Operator</label>
+          <input id="operatorDisplay" type="text" class="operator-display" readonly tabindex="-1" aria-readonly="true" placeholder="Sign in to log entries" />
+          <input type="hidden" id="operator" />
           <div class="error" id="errOperator" hidden>Required</div>
         </div>
         <div class="col-3">
@@ -392,6 +397,9 @@
           <label for="entryNotes">Notes</label>
           <textarea id="entryNotes" placeholder="Short note"></textarea>
         </div>
+        <div class="col-12">
+          <p id="operatorEntryNotice" class="operator-entry-notice" hidden></p>
+        </div>
         <div class="col-12 entry-actions">
           <button id="addLine" class="btn primary">Add line</button>
         </div>
@@ -402,6 +410,41 @@
   </div>
   </div>
 </div>
+
+  <div id="userModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="userModalTitle" aria-hidden="true">
+    <div class="modal user-modal">
+      <div class="toolbar modal-toolbar">
+        <h2 id="userModalTitle">User account</h2>
+        <button type="button" id="closeUserModal" class="btn icon-btn" title="Close user editor">✖️</button>
+      </div>
+      <form id="userForm" class="user-form" role="form" aria-labelledby="userModalTitle">
+        <input type="hidden" id="userId" />
+        <div class="grid">
+          <div class="col-6">
+            <label for="userName">Name</label>
+            <input id="userName" type="text" required />
+          </div>
+          <div class="col-6">
+            <label for="userEmail">Email</label>
+            <input id="userEmail" type="email" required />
+          </div>
+          <fieldset class="col-12 role-checkboxes">
+            <legend>Roles</legend>
+            <label><input type="checkbox" value="lead" name="userRole" /> Lead</label>
+            <label><input type="checkbox" value="operator" name="userRole" /> Operator</label>
+            <label><input type="checkbox" value="stagecrew" name="userRole" /> Stagecrew</label>
+            <label><input type="checkbox" value="admin" name="userRole" /> Admin</label>
+          </fieldset>
+        </div>
+        <div class="row form-actions">
+          <button type="button" id="userFormCancel" class="btn ghost">Cancel</button>
+          <button type="button" id="userFormSubmit" class="btn primary">Save user</button>
+        </div>
+        <p class="help small">New accounts receive the temporary password <code>adminsphere1</code> and must update it on first login.</p>
+        <div id="userFormStatus" class="help" role="status"></div>
+      </form>
+    </div>
+  </div>
 
   <div id="webhookModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="webhookModalTitle" aria-hidden="true">
     <div class="modal">

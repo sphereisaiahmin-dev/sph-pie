@@ -45,9 +45,72 @@
       <div class="toolbar config-header">
         <h2 id="configTitle">Workspace menu</h2>
       </div>
-      <nav class="config-nav" aria-label="Settings categories">
-        <button type="button" class="config-nav-btn is-active" data-config-target="admin">Admin settings</button>
+      <nav class="config-nav" aria-label="Workspace shortcuts">
+        <button type="button" class="config-nav-btn" data-config-target="landing">Choose workspace</button>
+        <button type="button" class="config-nav-btn" data-config-target="admin" id="adminWorkspaceNav">Admin workspace</button>
       </nav>
+      <p class="help">Use the shortcuts above to jump between views. Admin access is required to open the admin workspace.</p>
+      <div class="config-actions row">
+        <div class="grow"></div>
+        <button type="button" id="cancelConfig" class="btn ghost">Close menu</button>
+      </div>
+    </aside>
+
+    <div id="appMain" class="app-main">
+      <div class="topbar" role="banner">
+        <div class="topbar-toolbar">
+          <button id="configBtn" class="btn icon-btn hamburger-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="configPanel" title="Toggle settings">
+            <span class="hamburger-icon" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+            </span>
+            <span class="sr-only">Toggle settings</span>
+          </button>
+          <div class="topbar-actions">
+            <button id="roleHome" class="btn ghost" type="button">← Choose workspace</button>
+            <div id="sessionUser" class="session-user" hidden>
+              <div class="session-user-text">
+                <strong id="sessionName"></strong>
+                <span id="sessionRoles"></span>
+              </div>
+              <button id="logoutBtn" class="btn ghost small" type="button">Logout</button>
+            </div>
+          </div>
+          <img src="./assets/Sphere%20Logo_RGB%20_White.png" alt="Sphere" class="app-logo" />
+          <div class="topbar-title">
+            <span id="viewBadge" class="view-badge">Lead workspace</span>
+            <div class="title-stack">
+              <h1 class="app-title">Flight Log Form</h1>
+              <span class="title-sub">Tracking <span id="appTitle">Drone</span> activity</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="container" role="main">
+    <section id="landingView" class="panel landing-panel view-landing-only" aria-labelledby="landingTitle">
+      <h2 id="landingTitle">Choose workspace</h2>
+      <p class="lead">Select the role you need for this session.</p>
+      <div class="role-options">
+        <div class="role-options-main">
+          <button id="chooseLead" type="button" class="btn primary role-btn">Lead</button>
+          <button id="chooseOperator" type="button" class="btn primary role-btn">Operator</button>
+        </div>
+        <div class="role-options-archive">
+          <button id="chooseArchive" type="button" class="btn primary role-btn">Archive</button>
+        </div>
+      </div>
+      <p class="help">Lead sets up shows and manages exports. Operator logs entries against those shows.</p>
+    </section>
+
+    <section id="adminView" class="panel view-admin-only" aria-labelledby="adminTitle">
+      <div class="panel-header">
+        <h2 id="adminTitle">Admin workspace</h2>
+        <div class="panel-actions">
+          <p class="help">Manage accounts, unit labels, and integrations.</p>
+        </div>
+      </div>
       <form id="configForm" class="config-form">
         <section class="config-section grid is-active" data-config-section="admin">
           <div class="col-12 admin-users-panel">
@@ -108,61 +171,12 @@
         </section>
         <div class="config-actions row">
           <div class="grow"></div>
-          <button type="button" id="cancelConfig" class="btn ghost">Cancel</button>
           <button type="submit" class="btn primary">Save settings</button>
         </div>
         <div class="config-status">
           <div id="configMessage" role="status" aria-live="polite" class="help"></div>
         </div>
       </form>
-    </aside>
-
-    <div id="appMain" class="app-main">
-      <div class="topbar" role="banner">
-        <div class="topbar-toolbar">
-          <button id="configBtn" class="btn icon-btn hamburger-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="configPanel" title="Toggle settings">
-            <span class="hamburger-icon" aria-hidden="true">
-              <span></span>
-              <span></span>
-              <span></span>
-            </span>
-            <span class="sr-only">Toggle settings</span>
-          </button>
-          <div class="topbar-actions">
-            <button id="roleHome" class="btn ghost" type="button">← Choose workspace</button>
-            <div id="sessionUser" class="session-user" hidden>
-              <div class="session-user-text">
-                <strong id="sessionName"></strong>
-                <span id="sessionRoles"></span>
-              </div>
-              <button id="logoutBtn" class="btn ghost small" type="button">Logout</button>
-            </div>
-          </div>
-          <img src="./assets/Sphere%20Logo_RGB%20_White.png" alt="Sphere" class="app-logo" />
-          <div class="topbar-title">
-            <span id="viewBadge" class="view-badge">Lead workspace</span>
-            <div class="title-stack">
-              <h1 class="app-title">Flight Log Form</h1>
-              <span class="title-sub">Tracking <span id="appTitle">Drone</span> activity</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="container" role="main">
-    <section id="landingView" class="panel landing-panel view-landing-only" aria-labelledby="landingTitle">
-      <h2 id="landingTitle">Choose workspace</h2>
-      <p class="lead">Select the role you need for this session.</p>
-      <div class="role-options">
-        <div class="role-options-main">
-          <button id="chooseLead" type="button" class="btn primary role-btn">Lead</button>
-          <button id="chooseOperator" type="button" class="btn primary role-btn">Operator</button>
-        </div>
-        <div class="role-options-archive">
-          <button id="chooseArchive" type="button" class="btn primary role-btn">Archive</button>
-        </div>
-      </div>
-      <p class="help">Lead sets up shows and manages exports. Operator logs entries against those shows.</p>
     </section>
 
     <section id="archiveView" class="panel view-archive-only" aria-labelledby="archiveTitle">

@@ -237,6 +237,7 @@ const cancelConfigBtn = el('cancelConfig');
 const configForm = el('configForm');
 const configMessage = el('configMessage');
 const configNavButtons = qsa('[data-config-target]');
+const adminWorkspaceNavBtn = el('adminWorkspaceNav');
 const configSections = qsa('[data-config-section]');
 const unitLabelSelect = el('unitLabelSelect');
 const webhookEnabled = el('webhookEnabled');
@@ -445,12 +446,16 @@ function updateSessionUi(){
     }
   }
   if(configBtn){
-    const admin = isAdmin();
-    configBtn.hidden = !admin;
-    configBtn.disabled = !admin;
+    configBtn.hidden = false;
+    configBtn.disabled = false;
   }
   if(cancelConfigBtn){
-    cancelConfigBtn.disabled = !isAdmin();
+    cancelConfigBtn.disabled = false;
+  }
+  if(adminWorkspaceNavBtn){
+    const admin = isAdmin();
+    adminWorkspaceNavBtn.hidden = !admin;
+    adminWorkspaceNavBtn.disabled = !admin;
   }
   if(isAdmin()){
     renderUserDirectory();
@@ -895,14 +900,19 @@ function initUI(){
   }
   if(configNavButtons.length){
     configNavButtons.forEach(btn=>{
-      btn.setAttribute('aria-pressed', btn.classList.contains('is-active') ? 'true' : 'false');
+      btn.setAttribute('aria-pressed', 'false');
       btn.addEventListener('click', ()=>{
-        if(!isAdmin()){
-          toast('Admin access required', true);
-          return;
+        const target = btn.dataset.configTarget || 'landing';
+        if(target === 'admin'){
+          if(!isAdmin()){
+            toast('Admin access required', true);
+            return;
+          }
+          setView('admin');
+        }else{
+          setView(target);
         }
-        const target = btn.dataset.configTarget;
-        setConfigSection(target || 'admin');
+        toggleConfig(false);
       });
     });
   }
@@ -917,7 +927,7 @@ function initUI(){
 
   window.addEventListener('resize', refreshDrawerOffset);
   configForm.addEventListener('submit', onConfigSubmit);
-  setConfigSection('admin');
+  setConfigSection(state.currentView || 'landing');
   refreshDrawerOffset();
   closeAdminPinPrompt();
   if(webhookEnabled){
@@ -4014,9 +4024,14 @@ function setView(view){
     toast('Archive workspace requires a workspace role', true);
     return;
   }
+  if(view === 'admin' && !isAdmin()){
+    toast('Admin workspace requires Admin role', true);
+    return;
+  }
   state.currentView = view;
-  document.body.classList.remove('view-landing','view-lead','view-operator','view-archive');
+  document.body.classList.remove('view-landing','view-lead','view-operator','view-archive','view-admin');
   document.body.classList.add(`view-${view}`);
+  setConfigSection(view);
   if(viewBadge){
     if(view === 'landing'){
       viewBadge.hidden = true;
@@ -4028,6 +4043,9 @@ function setView(view){
         viewBadge.classList.add('view-badge-operator');
       }else if(view === 'archive'){
         viewBadge.textContent = 'Archive workspace';
+        viewBadge.classList.remove('view-badge-operator');
+      }else if(view === 'admin'){
+        viewBadge.textContent = 'Admin workspace';
         viewBadge.classList.remove('view-badge-operator');
       }else{
         viewBadge.textContent = 'Lead workspace';
@@ -4049,13 +4067,12 @@ function setView(view){
   if(view === 'archive'){
     renderArchiveSelect();
   }
+  if(view === 'admin' && isAdmin()){
+    loadUsers();
+  }
 }
 
 function toggleConfig(force){
-  if(!isAdmin()){
-    toast('Admin access required', true);
-    return;
-  }
   const shouldOpen = typeof force === 'boolean'
     ? force
     : !document.body.classList.contains('menu-open');
@@ -4072,14 +4089,15 @@ function toggleConfig(force){
     document.body.style.setProperty('--drawer-active-width', '0px');
   }
   requestAnimationFrame(refreshDrawerOffset);
+  const nextSection = state.currentView || 'landing';
   if(shouldOpen){
     configMessage.textContent = '';
-    setConfigSection('admin');
+    setConfigSection(nextSection);
     if(isAdmin()){
       loadUsers();
     }
   }else{
-    setConfigSection('admin');
+    setConfigSection(nextSection);
   }
 }
 
@@ -4109,6 +4127,13 @@ function setConfigSection(section){
       btn.classList.toggle('is-active', isActive);
       btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     });
+  }
+}
+
+function closeAdminPinPrompt(){
+  const prompt = el('adminPinPrompt');
+  if(prompt){
+    prompt.hidden = true;
   }
 }
 

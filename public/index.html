@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Flight Log Form</title>
+  <title>Production Information Environment</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
@@ -10,7 +10,7 @@
   <div id="loginScreen" class="auth-view">
     <div class="auth-card">
       <img src="./assets/Sphere%20Logo_RGB%20_White.png" alt="Sphere" class="auth-logo" />
-      <h1>Sign in to Monkey Tracker</h1>
+      <h1>Sign in to Production Information Environment</h1>
       <p class="help">Use your Sphere email address to continue.</p>
       <form id="loginForm" class="auth-form">
         <label for="loginEmail">Email</label>
@@ -78,7 +78,7 @@
             <span class="sr-only">Toggle settings</span>
           </button>
           <div class="topbar-actions">
-            <button id="roleHome" class="btn ghost" type="button">← Choose workspace</button>
+          <button id="roleHome" class="btn ghost" type="button">← Choose discipline</button>
             <div id="sessionUser" class="session-user" hidden>
               <div class="session-user-text">
                 <strong id="sessionName"></strong>
@@ -92,17 +92,33 @@
             <div id="welcomeBanner" class="welcome-banner" hidden></div>
             <span id="viewBadge" class="view-badge">Lead workspace</span>
             <div class="title-stack">
-              <h1 class="app-title">Flight Log Form</h1>
-              <span class="title-sub">Tracking <span id="appTitle">Drone</span> activity</span>
+              <h1 class="app-title">Production Information Environment</h1>
+              <span id="titleSub" class="title-sub">
+                <span id="titleSubPrefix">Tracking</span>
+                <span id="appTitle">Drone</span>
+                <span id="titleSubSuffix">activity</span>
+              </span>
             </div>
           </div>
         </div>
       </div>
 
       <div class="container" role="main">
+    <section id="disciplineView" class="panel landing-panel view-discipline-only" aria-labelledby="disciplineTitle">
+      <h2 id="disciplineTitle">Choose discipline</h2>
+      <p class="lead">Select the production discipline you want to manage.</p>
+      <div id="disciplineList" class="discipline-options" role="list"></div>
+    </section>
+
+    <section id="workspaceView" class="panel landing-panel view-workspace-only" aria-labelledby="workspaceTitle">
+      <h2 id="workspaceTitle">Choose your workspace</h2>
+      <p id="workspaceMessage" class="lead">Workspaces for this discipline are coming soon.</p>
+      <div id="workspaceList" class="role-options" role="list"></div>
+    </section>
+
     <section id="landingView" class="panel landing-panel view-landing-only" aria-labelledby="landingTitle">
       <h2 id="landingTitle">Choose workspace</h2>
-      <p class="lead">Select the role you need for this session.</p>
+      <p id="landingSubtitle" class="lead">Select the role you need for this session.</p>
       <div class="role-options">
         <div class="role-options-main">
           <button id="chooseLead" type="button" class="btn primary role-btn">Lead</button>
@@ -140,10 +156,6 @@
               <label class="sr-only" for="userRoleFilter">Filter by role</label>
               <select id="userRoleFilter">
                 <option value="">All roles</option>
-                <option value="lead">Lead</option>
-                <option value="operator">Operator</option>
-                <option value="stagecrew">Stagecrew</option>
-                <option value="admin">Admin</option>
               </select>
             </div>
             <div id="userDirectory" class="user-directory" aria-live="polite"></div>
@@ -152,7 +164,7 @@
             <label for="unitLabelSelect">Unit label</label>
             <select id="unitLabelSelect" name="unitLabel">
               <option value="Drone">Drone</option>
-              <option value="Monkey">Monkey</option>
+            <option value="Crew">Crew</option>
             </select>
             <p class="help">Controls how units are referenced across the UI.</p>
           </div>
@@ -281,7 +293,7 @@
           <select id="leadPilot" required></select>
         </div>
         <div class="col-6">
-          <label for="monkeyLead">Monkey Lead</label>
+          <label for="monkeyLead">Crew Lead</label>
           <select id="monkeyLead" required></select>
         </div>
         <div class="col-12">
@@ -300,7 +312,7 @@
           <div id="operatorShowSummary" class="help">Select a show to start logging entries.</div>
         </div>
         <div class="col-2">
-          <label for="unitId"><span id="unitLabel">Monkey</span> ID</label>
+          <label for="unitId"><span id="unitLabel">Drone</span> ID</label>
           <select id="unitId"></select>
           <div class="error" id="errUnit" hidden>Required</div>
         </div>
@@ -430,10 +442,7 @@
           </div>
           <fieldset class="col-12 role-checkboxes">
             <legend>Roles</legend>
-            <label><input type="checkbox" value="lead" name="userRole" /> Lead</label>
-            <label><input type="checkbox" value="operator" name="userRole" /> Operator</label>
-            <label><input type="checkbox" value="stagecrew" name="userRole" /> Stagecrew</label>
-            <label><input type="checkbox" value="admin" name="userRole" /> Admin</label>
+            <div id="userRoleGrid" class="user-role-grid"></div>
           </fieldset>
         </div>
         <div class="row form-actions">

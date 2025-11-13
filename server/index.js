@@ -19,6 +19,14 @@ const {
   DEFAULT_TEMP_PASSWORD
 } = require('./userStore');
 const {
+  DISCIPLINES,
+  ROLE_LEVELS,
+  DEFAULT_DISCIPLINE,
+  getRoleKey,
+  roleMatchesLevel,
+  findDiscipline
+} = require('./disciplineConfig');
+const {
   createSession,
   getSession,
   deleteSession,
@@ -33,6 +41,15 @@ const PASSWORD_RESET_ALLOW = new Set([
   'POST:/api/auth/logout',
   'GET:/api/health'
 ]);
+
+const DRONE_DISCIPLINE = findDiscipline('drones') || DEFAULT_DISCIPLINE;
+const DRONE_DISCIPLINE_ID = DRONE_DISCIPLINE?.id || null;
+const DRONE_LEAD_ROLE = DRONE_DISCIPLINE_ID ? getRoleKey(DRONE_DISCIPLINE_ID, 'lead') : null;
+const DRONE_OPERATOR_ROLE = DRONE_DISCIPLINE_ID ? getRoleKey(DRONE_DISCIPLINE_ID, 'operator') : null;
+const DRONE_CREW_ROLE = DRONE_DISCIPLINE_ID ? getRoleKey(DRONE_DISCIPLINE_ID, 'crew') : null;
+const DRONE_READ_ROLES = [DRONE_LEAD_ROLE, DRONE_OPERATOR_ROLE, DRONE_CREW_ROLE].filter(Boolean);
+const DRONE_WRITE_ROLES = [DRONE_LEAD_ROLE].filter(Boolean);
+const DRONE_ENTRY_ROLES = [DRONE_LEAD_ROLE, DRONE_OPERATOR_ROLE].filter(Boolean);
 
 async function bootstrap(){
   const app = express();
@@ -122,6 +139,14 @@ async function bootstrap(){
       port: configuredPort,
       boundHost,
       boundPort
+    });
+  });
+
+  app.get('/api/disciplines', requireAuth, (req, res)=>{
+    res.json({
+      roles: ROLE_LEVELS,
+      disciplines: DISCIPLINES,
+      defaultDiscipline: DRONE_DISCIPLINE_ID
     });
   });
 
@@ -235,40 +260,42 @@ async function bootstrap(){
 
   app.get('/api/staff', requireAuth, (req, res)=>{
     const directory = getRoleDirectory();
-    res.json({
-      leads: directory.leads,
-      operators: directory.operators,
-      stagecrew: directory.stagecrew,
-      pilots: directory.operators,
-      crew: directory.stagecrew,
-      monkeyLeads: directory.leads
-    });
+    const payload = DISCIPLINES.map(discipline => ({
+      id: discipline.id,
+      name: discipline.name,
+      roles: ROLE_LEVELS.map(level => ({
+        id: level,
+        name: level.charAt(0).toUpperCase() + level.slice(1),
+        users: directory[discipline.id]?.[level] || []
+      }))
+    }));
+    res.json({disciplines: payload});
   });
 
   app.put('/api/staff', requireRoles('admin'), (req, res)=>{
     res.status(410).json({error: 'Manual staff editing disabled. Manage users instead.'});
   });
 
-  app.get('/api/shows', requireRoles('lead', 'operator', 'stagecrew'), asyncHandler(async (req, res)=>{
+  app.get('/api/shows', requireRoles(...DRONE_READ_ROLES), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const shows = await provider.listShows();
     const storageMeta = getStorageMetadata();
     res.json({storage: storageMeta.label, storageMeta, webhook: getWebhookStatus(), shows});
   }));
 
-  app.get('/api/shows/archive', requireRoles('lead', 'operator', 'stagecrew'), asyncHandler(async (req, res)=>{
+  app.get('/api/shows/archive', requireRoles(...DRONE_READ_ROLES), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const shows = await provider.listArchivedShows();
     res.json({shows});
   }));
 
-  app.post('/api/shows', requireRoles('lead'), asyncHandler(async (req, res)=>{
+  app.post('/api/shows', requireRoles(...DRONE_WRITE_ROLES), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const show = await provider.createShow(req.body || {});
     res.status(201).json(show);
   }));
 
-  app.get('/api/shows/:id', requireRoles('lead', 'operator', 'stagecrew'), asyncHandler(async (req, res)=>{
+  app.get('/api/shows/:id', requireRoles(...DRONE_READ_ROLES), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const show = await provider.getShow(req.params.id);
     if(!show){
@@ -278,7 +305,7 @@ async function bootstrap(){
     res.json(show);
   }));
 
-  app.put('/api/shows/:id', requireRoles('lead'), asyncHandler(async (req, res)=>{
+  app.put('/api/shows/:id', requireRoles(...DRONE_WRITE_ROLES), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const show = await provider.updateShow(req.params.id, req.body || {});
     if(!show){
@@ -288,7 +315,7 @@ async function bootstrap(){
     res.json(show);
   }));
 
-  app.delete('/api/shows/:id', requireRoles('lead'), asyncHandler(async (req, res)=>{
+  app.delete('/api/shows/:id', requireRoles(...DRONE_WRITE_ROLES), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const archived = await provider.deleteShow(req.params.id);
     if(!archived){
@@ -299,7 +326,7 @@ async function bootstrap(){
     res.json(archived);
   }));
 
-  app.post('/api/shows/:id/archive', requireRoles('lead'), asyncHandler(async (req, res)=>{
+  app.post('/api/shows/:id/archive', requireRoles(...DRONE_WRITE_ROLES), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const archived = await provider.archiveShowNow(req.params.id);
     if(!archived){
@@ -446,7 +473,7 @@ async function bootstrap(){
     });
   }));
 
-  app.post('/api/shows/:id/entries', requireRoles('lead', 'operator'), asyncHandler(async (req, res)=>{
+  app.post('/api/shows/:id/entries', requireRoles(...DRONE_ENTRY_ROLES), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const payload = {...(req.body || {})};
     if(isOperatorOnly(req.user)){
@@ -460,7 +487,7 @@ async function bootstrap(){
     res.status(201).json(entry);
   }));
 
-  app.put('/api/shows/:id/entries/:entryId', requireRoles('lead', 'operator'), asyncHandler(async (req, res)=>{
+  app.put('/api/shows/:id/entries/:entryId', requireRoles(...DRONE_ENTRY_ROLES), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const entry = await provider.updateEntry(req.params.id, req.params.entryId, req.body || {});
     if(!entry){
@@ -470,7 +497,7 @@ async function bootstrap(){
     res.json(entry);
   }));
 
-  app.delete('/api/shows/:id/entries/:entryId', requireRoles('lead', 'operator'), asyncHandler(async (req, res)=>{
+  app.delete('/api/shows/:id/entries/:entryId', requireRoles(...DRONE_ENTRY_ROLES), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const result = await provider.deleteEntry(req.params.id, req.params.entryId);
     if(!result){
@@ -526,12 +553,17 @@ function isOperatorOnly(user){
   if(!user || !Array.isArray(user.roles)){
     return false;
   }
-  const elevated = new Set(['admin', 'lead']);
-  const roles = user.roles.map(role => typeof role === 'string' ? role.toLowerCase() : role);
-  if(!roles.includes('operator')){
+  const roles = user.roles;
+  const hasAdmin = roles.includes('admin');
+  if(hasAdmin){
     return false;
   }
-  return !roles.some(role => elevated.has(role));
+  const hasOperator = roles.some(role => roleMatchesLevel(role, 'operator'));
+  if(!hasOperator){
+    return false;
+  }
+  const hasLead = roles.some(role => roleMatchesLevel(role, 'lead'));
+  return !hasLead;
 }
 
 function normalizeRolesInput(input){
@@ -603,7 +635,11 @@ function requireAuth(req, res, next){
 }
 
 function requireRoles(...roles){
-  const roleSet = new Set(roles);
+  const roleSet = new Set(
+    roles
+      .map(role => typeof role === 'string' ? role.trim().toLowerCase() : '')
+      .filter(Boolean)
+  );
   return (req, res, next)=>{
     if(!req.user){
       res.status(401).json({error: 'Authentication required'});
@@ -614,7 +650,7 @@ function requireRoles(...roles){
       next();
       return;
     }
-    const allowed = userRoles.some(role => roleSet.has(role));
+    const allowed = userRoles.some(role => roleSet.has(typeof role === 'string' ? role.trim().toLowerCase() : ''));
     if(!allowed){
       res.status(403).json({error: 'Insufficient permissions'});
       return;

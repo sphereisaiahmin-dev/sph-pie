@@ -116,7 +116,7 @@ const state = {
   unitLabel: 'Drone',
   shows: [],
   currentShowId: null,
-  currentView: 'landing',
+  currentView: 'discipline',
   editingEntryRef: null,
   serverHost: '10.241.211.120',
   serverPort: 3000,
@@ -151,6 +151,11 @@ const state = {
     hasSecret: false,
     headerCount: 0
   },
+  disciplines: [],
+  roleLevels: ['lead', 'operator', 'crew'],
+  defaultDisciplineId: null,
+  selectedDisciplineId: null,
+  staffDirectory: {},
   staff: {
     stagecrew: [],
     operators: [],
@@ -175,10 +180,12 @@ const ARCHIVE_CHART_COLORS = ['#16a34a', '#f97316', '#38bdf8', '#a855f7', '#facc
 let archiveChartInstance = null;
 let uiInitialized = false;
 
-const SYNC_CHANNEL_NAME = 'monkey-tracker-sync';
+const SYNC_CHANNEL_NAME = 'pie-sync';
 const IDLE_LOGOUT_MS = 5 * 60 * 1000;
 
 const appTitle = el('appTitle');
+const titleSubPrefix = el('titleSubPrefix');
+const titleSubSuffix = el('titleSubSuffix');
 const loginScreen = el('loginScreen');
 const passwordResetScreen = el('passwordResetScreen');
 const appShell = el('appShell');
@@ -198,6 +205,16 @@ const sessionRolesEl = el('sessionRoles');
 const logoutBtn = el('logoutBtn');
 const userDirectoryEl = el('userDirectory');
 const userForm = el('userForm');
+const disciplineView = el('disciplineView');
+const disciplineList = el('disciplineList');
+const workspaceView = el('workspaceView');
+const workspaceMessage = el('workspaceMessage');
+const workspaceList = el('workspaceList');
+const disciplineTitle = el('disciplineTitle');
+const landingTitle = el('landingTitle');
+const landingSubtitle = el('landingSubtitle');
+const workspaceTitle = el('workspaceTitle');
+const userRoleGrid = el('userRoleGrid');
 const userIdInput = el('userId');
 const userNameInput = el('userName');
 const userEmailInput = el('userEmail');
@@ -335,6 +352,7 @@ async function bootstrap(){
 
 async function init(){
   await loadConfig();
+  await loadDisciplineConfig();
   updateConnectionIndicator('loading');
   await loadStaff();
   if(isAdmin()){
@@ -349,7 +367,7 @@ async function init(){
   populateIssues();
   renderActionsChips(actionsChips, []);
   setCurrentShow(state.currentShowId || null);
-  setView('landing');
+  setView('discipline');
   state.appReady = true;
 }
 
@@ -388,6 +406,9 @@ function initAuthUI(){
   }
   if(userForm){
     userForm.addEventListener('keydown', handleUserFormKeydown);
+  }
+  if(disciplineList){
+    disciplineList.addEventListener('click', onDisciplineListClick);
   }
   setupIdleActivityTracking();
   setupUnloadLogoutHandler();
@@ -528,11 +549,43 @@ function updateSessionUi(){
   syncOperatorIdentity();
 }
 
+function formatRoleKey(role){
+  if(typeof role !== 'string'){
+    return '';
+  }
+  const normalized = role.trim().toLowerCase();
+  if(!normalized){
+    return '';
+  }
+  if(normalized === 'admin'){
+    return 'Admin';
+  }
+  const [disciplineId, level] = normalized.split('.');
+  if(!level){
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  }
+  const discipline = state.disciplines.find(entry => entry.id === disciplineId);
+  const disciplineName = discipline ? discipline.name : (disciplineId ? disciplineId.charAt(0).toUpperCase() + disciplineId.slice(1) : '');
+  const levelName = level.charAt(0).toUpperCase() + level.slice(1);
+  return `${disciplineName} ${levelName}`.trim();
+}
+
+function formatRoleLevel(level){
+  if(typeof level !== 'string'){
+    return '';
+  }
+  const normalized = level.trim().toLowerCase();
+  if(!normalized){
+    return '';
+  }
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
 function formatRoleList(roles = []){
   if(!Array.isArray(roles) || !roles.length){
     return '';
   }
-  return roles.map(role => role.charAt(0).toUpperCase() + role.slice(1)).join(', ');
+  return roles.map(formatRoleKey).filter(Boolean).join(', ');
 }
 
 function getSessionFirstName(){
@@ -547,18 +600,19 @@ function getSessionFirstName(){
 }
 
 function updateWorkspaceAvailability(){
+  const hasWorkspaces = disciplineHasForms(getActiveDisciplineId());
   if(chooseLeadBtn){
-    const allowed = userHasRole('lead');
+    const allowed = hasWorkspaces && userHasRole('lead');
     chooseLeadBtn.disabled = !allowed;
     chooseLeadBtn.classList.toggle('is-disabled', !allowed);
   }
   if(chooseOperatorBtn){
-    const allowed = userHasRole('operator');
+    const allowed = hasWorkspaces && userHasRole('operator');
     chooseOperatorBtn.disabled = !allowed;
     chooseOperatorBtn.classList.toggle('is-disabled', !allowed);
   }
   if(chooseArchiveBtn){
-    const allowed = userHasRole('lead') || userHasRole('operator') || userHasRole('stagecrew');
+    const allowed = hasWorkspaces && (userHasRole('lead') || userHasRole('operator') || userHasRole('crew'));
     chooseArchiveBtn.disabled = !allowed;
     chooseArchiveBtn.classList.toggle('is-disabled', !allowed);
   }
@@ -671,7 +725,29 @@ function handlePasswordResetRequired(){
   showPasswordResetScreen();
 }
 
-function userHasRole(role){
+function resolveRoleKey(role, disciplineId){
+  if(typeof role !== 'string'){
+    return '';
+  }
+  const normalizedRole = role.trim().toLowerCase();
+  if(!normalizedRole){
+    return '';
+  }
+  if(normalizedRole === 'admin'){
+    return 'admin';
+  }
+  if(normalizedRole.includes('.')){
+    return normalizedRole;
+  }
+  const targetDiscipline = disciplineId || getActiveDisciplineId();
+  if(!targetDiscipline){
+    return normalizedRole;
+  }
+  const mappedRole = normalizedRole === 'stagecrew' ? 'crew' : normalizedRole;
+  return `${targetDiscipline}.${mappedRole}`;
+}
+
+function userHasRole(role, disciplineId){
   if(!role){
     return false;
   }
@@ -679,7 +755,11 @@ function userHasRole(role){
   if(roles.includes('admin')){
     return true;
   }
-  return roles.includes(role);
+  const key = resolveRoleKey(role, disciplineId);
+  if(!key){
+    return false;
+  }
+  return roles.some(entry => typeof entry === 'string' && entry.trim().toLowerCase() === key);
 }
 
 function isAdmin(){
@@ -785,10 +865,7 @@ function startUserEdit(userId){
   userIdInput.value = user.id;
   userNameInput.value = user.name || '';
   userEmailInput.value = user.email || '';
-  const roleInputs = userForm.querySelectorAll('input[name="userRole"]');
-  roleInputs.forEach(input =>{
-    input.checked = Array.isArray(user.roles) ? user.roles.includes(input.value) : false;
-  });
+  renderUserRoleGrid(user.roles || []);
   openUserModal('edit', user.name || user.email || 'user');
   if(userFormStatus){
     userFormStatus.textContent = 'Editing existing user';
@@ -804,8 +881,7 @@ function resetUserForm(options = {}){
   userIdInput.value = '';
   userNameInput.value = '';
   userEmailInput.value = '';
-  const roleInputs = userForm.querySelectorAll('input[name="userRole"]');
-  roleInputs.forEach(input =>{ input.checked = false; });
+  renderUserRoleGrid([]);
   if(userFormStatus){
     userFormStatus.textContent = '';
     userFormStatus.classList.remove('error');
@@ -999,7 +1075,7 @@ function initUI(){
   }
   if(chooseArchiveBtn){
     chooseArchiveBtn.addEventListener('click', ()=>{
-      if(!userHasRole('lead') && !userHasRole('operator') && !userHasRole('stagecrew')){
+      if(!userHasRole('lead') && !userHasRole('operator') && !userHasRole('crew')){
         toast('Archive workspace requires a workspace role', true);
         return;
       }
@@ -1036,7 +1112,7 @@ function initUI(){
     closeArchiveDayDetailBtn.addEventListener('click', closeArchiveDayDetail);
   }
   if(roleHomeBtn){
-    roleHomeBtn.addEventListener('click', ()=> setView('landing'));
+    roleHomeBtn.addEventListener('click', ()=> setView('discipline'));
   }
   if(newUserBtn){
     newUserBtn.addEventListener('click', onNewUserClick);
@@ -1189,7 +1265,7 @@ async function loadConfig(){
     headersText: formatHeadersText(data.webhook?.headers)
   };
   state.webhookStatus = normalizeWebhookStatus(data.webhookStatus, data.webhook);
-  appTitle.textContent = state.unitLabel;
+  updateDisciplineHeader();
   unitLabelEl.textContent = state.unitLabel;
   unitLabelSelect.value = state.unitLabel;
   setLanAddress();
@@ -1198,25 +1274,268 @@ async function loadConfig(){
   refreshWebhookUi();
 }
 
+async function loadDisciplineConfig(){
+  try{
+    const data = await apiRequest('/api/disciplines');
+    const roles = Array.isArray(data?.roles) ? data.roles : [];
+    state.roleLevels = roles.map(role => typeof role === 'string' ? role.trim().toLowerCase() : '').filter(Boolean);
+    const disciplines = Array.isArray(data?.disciplines) ? data.disciplines : [];
+    state.disciplines = disciplines.map(item => ({
+      id: typeof item.id === 'string' ? item.id.trim().toLowerCase() : '',
+      name: typeof item.name === 'string' ? item.name.trim() : '',
+      default: Boolean(item.default),
+      forms: Boolean(item.forms)
+    })).filter(entry => entry.id && entry.name);
+    const defaultId = typeof data?.defaultDiscipline === 'string' && data.defaultDiscipline
+      ? data.defaultDiscipline.trim().toLowerCase()
+      : (state.disciplines.find(discipline => discipline.default)?.id || state.disciplines[0]?.id || null);
+    state.defaultDisciplineId = defaultId;
+    if(!state.selectedDisciplineId){
+      state.selectedDisciplineId = defaultId;
+    }
+    const selectedRoles = getSelectedUserRoles();
+    renderDisciplineOptions();
+    updateActiveDisciplineUi();
+    renderUserRoleGrid(selectedRoles);
+    renderUserRoleFilterOptions();
+  }catch(err){
+    console.error('Failed to load disciplines', err);
+    if(!state.disciplines.length){
+      state.disciplines = [{id: 'drones', name: 'Drones', default: true, forms: true}];
+      state.defaultDisciplineId = 'drones';
+      if(!state.selectedDisciplineId){
+        state.selectedDisciplineId = 'drones';
+      }
+    }
+    const selectedRoles = getSelectedUserRoles();
+    renderDisciplineOptions();
+    updateActiveDisciplineUi();
+    renderUserRoleGrid(selectedRoles);
+    renderUserRoleFilterOptions();
+  }
+}
+
 async function loadStaff(){
   try{
     const data = await apiRequest('/api/staff');
-    const stagecrew = normalizeNameList(Array.isArray(data.stagecrew) ? data.stagecrew : (Array.isArray(data.crew) ? data.crew : []), {sort: true});
-    const operators = normalizeNameList(Array.isArray(data.operators) ? data.operators : (Array.isArray(data.pilots) ? data.pilots : []), {sort: true});
-    const leads = normalizeNameList(Array.isArray(data.leads) ? data.leads : (Array.isArray(data.monkeyLeads) ? data.monkeyLeads : []), {sort: true});
-    state.staff = {stagecrew, operators, leads};
+    const directory = {};
+    const disciplines = Array.isArray(data?.disciplines) ? data.disciplines : [];
+    disciplines.forEach(entry =>{
+      const id = typeof entry?.id === 'string' ? entry.id.trim().toLowerCase() : '';
+      if(!id){
+        return;
+      }
+      const roleMap = {};
+      if(Array.isArray(entry.roles)){
+        entry.roles.forEach(roleEntry =>{
+          const levelId = typeof roleEntry?.id === 'string' ? roleEntry.id.trim().toLowerCase() : '';
+          if(!levelId){
+            return;
+          }
+          roleMap[levelId] = normalizeNameList(roleEntry?.users || [], {sort: true});
+        });
+      }
+      directory[id] = roleMap;
+    });
+    state.staffDirectory = directory;
+    applyActiveDisciplineRoster();
   }catch(err){
     console.error('Failed to load staff', err);
+    state.staffDirectory = state.staffDirectory || {};
     state.staff = state.staff || {stagecrew: [], operators: [], leads: []};
     state.staff.stagecrew = [];
     state.staff.operators = [];
     state.staff.leads = [];
     toast('Failed to load staff directory', true);
+    applyActiveDisciplineRoster();
   }
+}
+
+function getActiveDisciplineId(){
+  return state.selectedDisciplineId || state.defaultDisciplineId || state.disciplines[0]?.id || 'drones';
+}
+
+function getDisciplineRoster(disciplineId){
+  const roster = state.staffDirectory[disciplineId] || {};
+  return {
+    lead: normalizeNameList(roster.lead || roster.leads || [], {sort: true}),
+    operator: normalizeNameList(roster.operator || roster.operators || [], {sort: true}),
+    crew: normalizeNameList(roster.crew || roster.stagecrew || [], {sort: true})
+  };
+}
+
+function applyActiveDisciplineRoster(){
+  const disciplineId = getActiveDisciplineId();
+  const roster = getDisciplineRoster(disciplineId);
+  state.staff = {
+    stagecrew: roster.crew.slice(),
+    operators: roster.operator.slice(),
+    leads: roster.lead.slice()
+  };
   renderOperatorOptions();
   renderCrewOptions(getCurrentShow()?.crew || []);
   renderPilotAssignments(getCurrentShow());
   renderShowHeaderDraft();
+  updateActiveDisciplineUi();
+}
+
+function getDisciplineDisplayName(disciplineId){
+  const normalized = typeof disciplineId === 'string' ? disciplineId.trim().toLowerCase() : '';
+  if(!normalized){
+    return '';
+  }
+  const entry = state.disciplines.find(item => item.id === normalized);
+  if(entry){
+    return entry.name || normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  }
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function disciplineHasForms(disciplineId){
+  const normalized = typeof disciplineId === 'string' ? disciplineId.trim().toLowerCase() : '';
+  if(!normalized){
+    return false;
+  }
+  const entry = state.disciplines.find(item => item.id === normalized);
+  if(entry){
+    return Boolean(entry.forms);
+  }
+  return normalized === 'drones';
+}
+
+function updateDisciplineHeader(){
+  const disciplineId = getActiveDisciplineId();
+  const name = getDisciplineDisplayName(disciplineId) || state.unitLabel || 'Discipline';
+  const hasForms = disciplineHasForms(disciplineId);
+  if(appTitle){
+    appTitle.textContent = hasForms ? state.unitLabel : name;
+  }
+  if(titleSubPrefix){
+    titleSubPrefix.textContent = hasForms ? 'Tracking' : 'Preparing';
+  }
+  if(titleSubSuffix){
+    titleSubSuffix.textContent = hasForms ? 'activity' : 'workspaces';
+  }
+}
+
+function renderDisciplineOptions(){
+  if(!disciplineList){
+    return;
+  }
+  const options = state.disciplines.length ? state.disciplines : [{id: 'drones', name: 'Drones', forms: true}];
+  const activeId = getActiveDisciplineId();
+  disciplineList.innerHTML = options.map(option =>{
+    const isActive = option.id === activeId;
+    const classes = ['btn', 'primary', 'role-btn'];
+    if(isActive){
+      classes.push('is-active');
+    }
+    const label = escapeHtml(option.name || getDisciplineDisplayName(option.id));
+    return `<button type="button" class="${classes.join(' ')}" data-discipline-id="${escapeHtml(option.id)}" aria-pressed="${isActive ? 'true' : 'false'}">${label}</button>`;
+  }).join('');
+}
+
+function onDisciplineListClick(event){
+  const target = event.target.closest('[data-discipline-id]');
+  if(!target){
+    return;
+  }
+  const id = target.dataset.disciplineId;
+  if(typeof id !== 'string'){
+    return;
+  }
+  selectDiscipline(id);
+}
+
+function selectDiscipline(disciplineId){
+  const normalized = typeof disciplineId === 'string' ? disciplineId.trim().toLowerCase() : '';
+  if(!normalized){
+    return;
+  }
+  state.selectedDisciplineId = normalized;
+  applyActiveDisciplineRoster();
+  renderDisciplineOptions();
+  updateActiveDisciplineUi();
+  if(disciplineHasForms(normalized)){
+    setView('landing');
+  }else{
+    setView('workspace');
+  }
+}
+
+function renderWorkspacePlaceholder(){
+  if(!workspaceMessage){
+    return;
+  }
+  const disciplineId = getActiveDisciplineId();
+  const name = getDisciplineDisplayName(disciplineId) || 'this discipline';
+  workspaceMessage.textContent = `Workspaces for ${name} are coming soon.`;
+  if(workspaceList){
+    workspaceList.innerHTML = '';
+  }
+}
+
+function updateActiveDisciplineUi(){
+  const disciplineId = getActiveDisciplineId();
+  const name = getDisciplineDisplayName(disciplineId) || 'this discipline';
+  if(landingTitle){
+    landingTitle.textContent = `Choose workspace for ${name}`;
+  }
+  if(landingSubtitle){
+    landingSubtitle.textContent = `Select the role you need for the ${name} team.`;
+  }
+  if(workspaceTitle){
+    workspaceTitle.textContent = `Choose your workspace for ${name}`;
+  }
+  if(disciplineTitle){
+    disciplineTitle.textContent = 'Choose discipline';
+  }
+  updateDisciplineHeader();
+}
+
+function renderUserRoleGrid(selectedRoles = []){
+  if(!userRoleGrid){
+    return;
+  }
+  const selectedSet = new Set((selectedRoles || []).map(role => typeof role === 'string' ? role.trim().toLowerCase() : ''));
+  const disciplines = state.disciplines.length ? state.disciplines : [{id: 'drones', name: 'Drones', forms: true}];
+  const roleLevels = state.roleLevels.length ? state.roleLevels : ['lead', 'operator', 'crew'];
+  const groups = disciplines.map(discipline =>{
+    const roleItems = roleLevels.map(level =>{
+      const value = `${discipline.id}.${level}`;
+      const checked = selectedSet.has(value);
+      const label = formatRoleLevel(level);
+      return `<label><input type="checkbox" name="userRole" value="${escapeHtml(value)}"${checked ? ' checked' : ''} /> ${escapeHtml(label)}</label>`;
+    }).join('');
+    return `<div class="user-role-group"><h4>${escapeHtml(discipline.name)}</h4>${roleItems}</div>`;
+  });
+  const adminChecked = selectedSet.has('admin');
+  groups.push(`<div class="user-role-group"><h4>Global</h4><label><input type="checkbox" name="userRole" value="admin"${adminChecked ? ' checked' : ''} /> Admin</label></div>`);
+  userRoleGrid.innerHTML = groups.join('');
+}
+
+function renderUserRoleFilterOptions(){
+  if(!userRoleFilter){
+    return;
+  }
+  const currentValue = state.userFilters?.role || userRoleFilter.value || '';
+  const disciplines = state.disciplines.length ? state.disciplines : [{id: 'drones', name: 'Drones', forms: true}];
+  const roleLevels = state.roleLevels.length ? state.roleLevels : ['lead', 'operator', 'crew'];
+  const options = [];
+  disciplines.forEach(discipline =>{
+    roleLevels.forEach(level =>{
+      const value = `${discipline.id}.${level}`;
+      const label = `${discipline.name} ${formatRoleLevel(level)}`;
+      options.push({value, label});
+    });
+  });
+  options.push({value: 'admin', label: 'Admin'});
+  const existing = new Set(options.map(option => option.value));
+  let nextValue = existing.has(currentValue) ? currentValue : '';
+  const optionMarkup = options.map(option => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join('');
+  userRoleFilter.innerHTML = `<option value="">All roles</option>${optionMarkup}`;
+  userRoleFilter.value = nextValue;
+  state.userFilters.role = nextValue;
 }
 
 async function loadShows(){
@@ -1569,7 +1888,7 @@ function updateOperatorSummary(){
   const parts = [`Logging to ${date} • ${time}`];
   if(show.label){ parts.push(show.label); }
   if(show.leadPilot){ parts.push(`Lead: ${show.leadPilot}`); }
-  if(show.monkeyLead){ parts.push(`Monkey lead: ${show.monkeyLead}`); }
+  if(show.monkeyLead){ parts.push(`Crew lead: ${show.monkeyLead}`); }
   operatorShowSummary.textContent = parts.join(' • ');
 }
 
@@ -2861,7 +3180,7 @@ function renderArchiveDetails(show){
     ['Time', formatTime12Hour(show.time) || show.time || '—'],
     ['Label', show.label || '—'],
     ['Lead', show.leadPilot || '—'],
-    ['Monkey lead', show.monkeyLead || '—'],
+    ['Crew lead', show.monkeyLead || '—'],
     ['Crew', crewList],
     ['Entries logged', entries.length]
   ];
@@ -3254,7 +3573,7 @@ function populateUnitOptions(){
   const currentValue = unitId.value;
   unitId.innerHTML = '<option value="">Select</option>' + units.map(u=>`<option ${currentValue===u?'selected':''}>${u}</option>`).join('');
   unitLabelEl.textContent = state.unitLabel;
-  appTitle.textContent = state.unitLabel;
+  updateDisciplineHeader();
 }
 
 function populateIssues(){
@@ -3377,7 +3696,7 @@ function ensureShowHeaderValid(values, options = {}){
     {key: 'time', label: 'Show start time', element: showTime},
     {key: 'label', label: 'Show label', element: showLabel},
     {key: 'leadPilot', label: 'Lead', element: leadPilotSelect},
-    {key: 'monkeyLead', label: 'Monkey lead', element: monkeyLeadSelect}
+    {key: 'monkeyLead', label: 'Crew lead', element: monkeyLeadSelect}
   ];
   let firstInvalid = null;
   requiredFields.forEach(field =>{
@@ -3766,7 +4085,8 @@ function renderGroups(){
     header.style.fontWeight = '700';
     header.style.color = 'var(--text-dim)';
     header.style.borderBottom = '2px solid var(--border)';
-    const idHeader = state.unitLabel === 'Monkey' ? 'M#' : 'D#';
+    const unitPrefix = (state.unitLabel || '').trim();
+    const idHeader = unitPrefix ? `${unitPrefix.charAt(0).toUpperCase()}#` : 'U#';
     header.innerHTML = `
       <div><b>${idHeader}</b></div>
       <div><b>Planned</b></div>
@@ -4252,60 +4572,73 @@ function updateOperatorEntryState(){
 }
 
 function setView(view){
-  if(view === 'lead' && !userHasRole('lead')){
+  const normalizedView = view || 'discipline';
+  if(normalizedView === 'lead' && !userHasRole('lead')){
     toast('Lead workspace requires Lead role', true);
     return;
   }
-  if(view === 'operator' && !userHasRole('operator')){
+  if(normalizedView === 'operator' && !userHasRole('operator')){
     toast('Operator workspace requires Operator role', true);
     return;
   }
-  if(view === 'archive' && !userHasRole('lead') && !userHasRole('operator') && !userHasRole('stagecrew')){
+  if(normalizedView === 'archive' && !userHasRole('crew') && !userHasRole('operator') && !userHasRole('lead')){
     toast('Archive workspace requires a workspace role', true);
     return;
   }
-  if(view === 'admin' && !isAdmin()){
+  if(normalizedView === 'admin' && !isAdmin()){
     toast('Admin workspace requires Admin role', true);
     return;
   }
-  state.currentView = view;
-  document.body.classList.remove('view-landing','view-lead','view-operator','view-archive','view-admin');
-  document.body.classList.add(`view-${view}`);
-  setConfigSection(view);
+  state.currentView = normalizedView;
+  const knownViews = ['discipline','landing','lead','operator','archive','admin','workspace'];
+  document.body.classList.remove(...knownViews.map(value => `view-${value}`));
+  document.body.classList.add(`view-${normalizedView}`);
+  setConfigSection(normalizedView);
   if(viewBadge){
     viewBadge.hidden = false;
     viewBadge.classList.remove('view-badge-operator');
-    if(view === 'operator'){
+    if(normalizedView === 'operator'){
       viewBadge.textContent = 'Operator workspace';
       viewBadge.classList.add('view-badge-operator');
-    }else if(view === 'archive'){
+    }else if(normalizedView === 'archive'){
       viewBadge.textContent = 'Archive workspace';
-    }else if(view === 'admin'){
+    }else if(normalizedView === 'admin'){
       viewBadge.textContent = 'Admin workspace';
-    }else if(view === 'landing'){
+    }else if(normalizedView === 'landing'){
       viewBadge.textContent = 'Choose workspace';
+    }else if(normalizedView === 'discipline'){
+      viewBadge.textContent = 'Select discipline';
+    }else if(normalizedView === 'workspace'){
+      viewBadge.textContent = 'Workspace overview';
     }else{
       viewBadge.textContent = 'Lead workspace';
     }
   }
   if(roleHomeBtn){
-    roleHomeBtn.hidden = view === 'landing';
+    roleHomeBtn.hidden = normalizedView === 'discipline';
   }
-  if(view === 'landing'){
+  if(normalizedView === 'discipline'){
+    toggleConfig(false);
+    renderDisciplineOptions();
+  }else if(normalizedView === 'workspace'){
+    toggleConfig(false);
+    renderWorkspacePlaceholder();
+  }else if(normalizedView === 'landing'){
     toggleConfig(false);
   }
-  if(view === 'operator'){
+  if(normalizedView === 'operator'){
     syncOperatorShowSelect();
   }else{
     updateOperatorSummary();
   }
-  if(view === 'archive'){
+  if(normalizedView === 'archive'){
     renderArchiveSelect();
   }
-  if(view === 'admin' && isAdmin()){
+  if(normalizedView === 'admin' && isAdmin()){
     loadUsers();
   }
   updateOperatorEntryState();
+  updateWorkspaceAvailability();
 }
 
 function toggleConfig(force){
@@ -4413,7 +4746,7 @@ async function onConfigSubmit(event){
     };
     state.webhookStatus = normalizeWebhookStatus(updated.webhookStatus || updated.webhook, updated.webhook);
     unitLabelSelect.value = state.unitLabel;
-    appTitle.textContent = state.unitLabel;
+    updateDisciplineHeader();
     unitLabelEl.textContent = state.unitLabel;
     setLanAddress();
     setProviderBadge(state.storageMeta || state.storageLabel);
@@ -4913,10 +5246,15 @@ function csvEscape(value){
 }
 
 function getDefaultUnits(){
-  if(state.unitLabel === 'Monkey'){
-    return Array.from({length: 12}, (_, i)=> String(i+1));
+  const label = (state.unitLabel || '').trim();
+  if(!label){
+    return Array.from({length: 12}, (_, i)=> `U${i+1}`);
   }
-  return Array.from({length: 12}, (_, i)=> `D${i+1}`);
+  if(label.toLowerCase() === 'drone'){
+    return Array.from({length: 12}, (_, i)=> `D${i+1}`);
+  }
+  const prefix = label.charAt(0).toUpperCase();
+  return Array.from({length: 12}, (_, i)=> `${prefix}${i+1}`);
 }
 
 function formatDateUS(dateStr){
@@ -5165,7 +5503,7 @@ function renderCrewOptions(selected = []){
   const selectedList = normalizeNameList(selected);
   const crewNames = getStagecrewNames([selectedList]);
   if(!crewNames.length){
-    showCrewSelect.innerHTML = '<option value="">Add stagecrew via admin settings</option>';
+    showCrewSelect.innerHTML = '<option value="">Add crew via admin settings</option>';
     showCrewSelect.disabled = true;
     return;
   }
@@ -5200,7 +5538,7 @@ function renderPilotAssignments(show){
   if(monkeyLeadSelect){
     const monkeyNames = getStagecrewNames([show?.monkeyLead]);
     if(!monkeyNames.length){
-      monkeyLeadSelect.innerHTML = '<option value="">Add stagecrew via admin settings</option>';
+      monkeyLeadSelect.innerHTML = '<option value="">Add crew via admin settings</option>';
       monkeyLeadSelect.disabled = true;
     }else{
       const monkeyOptions = [''].concat(monkeyNames).map(name=>{

@@ -27,7 +27,7 @@ async function main(){
         label: `Simulated show ${day + 1}-${index + 1}`,
         crew: ['Sim Crew'],
         leadPilot: 'Sim Lead',
-        monkeyLead: 'Sim Monkey',
+        monkeyLead: 'Sim Crew',
         notes: 'Archive simulation record',
         createdAt: showTimestamp,
         updatedAt: showTimestamp

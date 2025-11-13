@@ -4,7 +4,7 @@ const path = require('path');
 const CONFIG_FILE = path.join(__dirname, '..', 'config', 'app-config.json');
 const DEFAULT_HOST = process.env.HOST || process.env.LISTEN_HOST || '10.241.211.120';
 const DEFAULT_PORT = Number.isFinite(parseInt(process.env.PORT, 10)) ? parseInt(process.env.PORT, 10) : 3000;
-const DEFAULT_POSTGRES_URL = process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/monkey_tracker';
+const DEFAULT_POSTGRES_URL = process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/pie';
 const DEFAULT_STORAGE_PROVIDER = (process.env.STORAGE_PROVIDER || process.env.DB_PROVIDER || 'sqljs').toLowerCase();
 const DEFAULT_CONFIG = {
   host: DEFAULT_HOST,
@@ -12,7 +12,7 @@ const DEFAULT_CONFIG = {
   unitLabel: 'Drone',
   storageProvider: DEFAULT_STORAGE_PROVIDER === 'postgres' || DEFAULT_STORAGE_PROVIDER === 'postgresql' ? 'postgres' : 'sqljs',
   sql: {
-    filename: path.join(process.cwd(), 'data', 'monkey-tracker.sqlite')
+    filename: path.join(process.cwd(), 'data', 'pie.sqlite')
   },
   postgres: {
     connectionString: DEFAULT_POSTGRES_URL,

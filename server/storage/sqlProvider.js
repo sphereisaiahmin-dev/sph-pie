@@ -16,7 +16,7 @@ class SqlProvider {
     this.config = config;
     this.db = null;
     this.SQL = null;
-    this.filename = this.config.filename || path.join(process.cwd(), 'data', 'monkey-tracker.sqlite');
+    this.filename = this.config.filename || path.join(process.cwd(), 'data', 'pie.sqlite');
   }
 
   async init(){
@@ -292,7 +292,7 @@ class SqlProvider {
       {key: 'time', label: 'Show start time'},
       {key: 'label', label: 'Show label'},
       {key: 'leadPilot', label: 'Lead pilot'},
-      {key: 'monkeyLead', label: 'Monkey lead'}
+      {key: 'monkeyLead', label: 'Crew lead'}
     ];
     required.forEach(field =>{
       const value = typeof raw[field.key] === 'string' ? raw[field.key].trim() : '';

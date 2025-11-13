@@ -166,7 +166,7 @@ class SqlProvider {
       id: entryInput.id || uuidv4(),
       ts: entryInput.ts || Date.now()
     });
-    this._assertPilotUnique(show, entry);
+    this._assertOperatorUnique(show, entry);
     const idx = show.entries.findIndex(e => e.id === entry.id);
     if(idx >= 0){
       show.entries[idx] = entry;
@@ -192,7 +192,7 @@ class SqlProvider {
       ...show.entries[idx],
       ...updates
     });
-    this._assertPilotUnique(show, entry);
+    this._assertOperatorUnique(show, entry);
     show.entries[idx] = entry;
     show.updatedAt = Date.now();
     await this._persist(show);
@@ -370,7 +370,7 @@ class SqlProvider {
     }
   }
 
-  _assertPilotUnique(show, entry){
+  _assertOperatorUnique(show, entry){
     if(!show){
       return;
     }
@@ -389,7 +389,7 @@ class SqlProvider {
       return existingPilot === normalized;
     });
     if(hasDuplicate){
-      const err = new Error('Pilot already has an entry for this show.');
+      const err = new Error('Operator already has an entry for this show.');
       err.status = 400;
       throw err;
     }

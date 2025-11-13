@@ -4,8 +4,35 @@ const morgan = require('morgan');
 const { loadConfig, saveConfig } = require('./configStore');
 const { initProvider, getProvider } = require('./storage');
 const { setWebhookConfig, getWebhookStatus, dispatchShowEvent } = require('./webhookDispatcher');
+const {
+  initUserStore,
+  listUsers,
+  createUser,
+  updateUser,
+  setUserPassword,
+  resetUserPassword,
+  verifyPassword,
+  findUserByEmail,
+  findUserById,
+  sanitizeUser,
+  getRoleDirectory,
+  DEFAULT_TEMP_PASSWORD
+} = require('./userStore');
+const {
+  createSession,
+  getSession,
+  deleteSession,
+  deleteSessionsForUser,
+  SESSION_COOKIE_NAME
+} = require('./sessionStore');
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
+const PASSWORD_RESET_ALLOW = new Set([
+  'GET:/api/auth/session',
+  'POST:/api/auth/password',
+  'POST:/api/auth/logout',
+  'GET:/api/health'
+]);
 
 async function bootstrap(){
   const app = express();
@@ -18,6 +45,7 @@ async function bootstrap(){
   let boundHost = envHost || configuredHost;
   let serverInstance = null;
   await initProvider(config);
+  await initUserStore();
   await setWebhookConfig(config.webhook);
 
   app.use(express.json({limit: '2mb'}));
@@ -29,6 +57,40 @@ async function bootstrap(){
       Promise.resolve(fn(req, res, next)).catch(next);
     };
   }
+
+  app.use(asyncHandler(async (req, res, next)=>{
+    const token = readSessionToken(req);
+    if(!token){
+      return next();
+    }
+    const session = getSession(token);
+    if(!session){
+      return next();
+    }
+    const userRecord = findUserById(session.userId);
+    if(!userRecord){
+      deleteSession(token);
+      return next();
+    }
+    req.sessionToken = token;
+    req.userRecord = userRecord;
+    req.user = sanitizeUser(userRecord);
+    return next();
+  }));
+
+  app.use((req, res, next)=>{
+    if(!req.path.startsWith('/api/')){
+      return next();
+    }
+    if(!req.user || !req.user.needsPasswordReset){
+      return next();
+    }
+    const key = `${req.method.toUpperCase()}:${req.path}`;
+    if(PASSWORD_RESET_ALLOW.has(key)){
+      return next();
+    }
+    return res.status(423).json({error: 'Password reset required'});
+  });
 
   function getStorageMetadata(){
     try{
@@ -63,12 +125,98 @@ async function bootstrap(){
     });
   });
 
-  app.get('/api/config', (req, res)=>{
+  app.get('/api/auth/session', (req, res)=>{
+    if(!req.user){
+      res.json({authenticated: false});
+      return;
+    }
+    res.json({authenticated: true, user: req.user});
+  });
+
+  app.post('/api/auth/login', asyncHandler(async (req, res)=>{
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    if(!email || !password){
+      res.status(400).json({error: 'Email and password are required'});
+      return;
+    }
+    const userRecord = findUserByEmail(email);
+    if(!userRecord || !verifyPassword(userRecord, password)){
+      res.status(401).json({error: 'Invalid email or password'});
+      return;
+    }
+    const {token, expiresAt} = createSession(userRecord.id);
+    setSessionCookie(res, token, expiresAt);
+    res.json({authenticated: true, user: sanitizeUser(userRecord)});
+  }));
+
+  app.post('/api/auth/logout', requireAuth, (req, res)=>{
+    if(req.sessionToken){
+      deleteSession(req.sessionToken);
+    }
+    clearSessionCookie(res);
+    res.json({ok: true});
+  });
+
+  app.post('/api/auth/password', requireAuth, asyncHandler(async (req, res)=>{
+    const {currentPassword, newPassword} = req.body || {};
+    const userRecord = findUserById(req.user.id);
+    if(!userRecord){
+      res.status(404).json({error: 'User not found'});
+      return;
+    }
+    if(!verifyPassword(userRecord, typeof currentPassword === 'string' ? currentPassword : '')){
+      res.status(400).json({error: 'Current password is incorrect'});
+      return;
+    }
+    await setUserPassword(userRecord.id, typeof newPassword === 'string' ? newPassword : '', {requireReset: false});
+    deleteSessionsForUser(userRecord.id);
+    const updatedRecord = findUserById(userRecord.id);
+    const {token, expiresAt} = createSession(updatedRecord.id);
+    setSessionCookie(res, token, expiresAt);
+    res.json({user: sanitizeUser(updatedRecord)});
+  }));
+
+  app.get('/api/users', requireRoles('admin'), (req, res)=>{
+    res.json({users: listUsers(), defaultPassword: DEFAULT_TEMP_PASSWORD});
+  });
+
+  app.post('/api/users', requireRoles('admin'), asyncHandler(async (req, res)=>{
+    const body = req.body || {};
+    const roles = normalizeRolesInput(body.roles);
+    const user = await createUser({
+      name: body.name,
+      email: body.email,
+      roles: roles === undefined ? [] : roles
+    });
+    res.status(201).json({user, defaultPassword: DEFAULT_TEMP_PASSWORD});
+  }));
+
+  app.put('/api/users/:id', requireRoles('admin'), asyncHandler(async (req, res)=>{
+    const roles = normalizeRolesInput(req.body?.roles);
+    const payload = {
+      name: req.body?.name,
+      email: req.body?.email
+    };
+    if(roles !== undefined){
+      payload.roles = roles;
+    }
+    const updated = await updateUser(req.params.id, payload);
+    res.json({user: updated});
+  }));
+
+  app.post('/api/users/:id/reset-password', requireRoles('admin'), asyncHandler(async (req, res)=>{
+    const updated = await resetUserPassword(req.params.id);
+    deleteSessionsForUser(req.params.id);
+    res.json({user: updated, defaultPassword: DEFAULT_TEMP_PASSWORD});
+  }));
+
+  app.get('/api/config', requireAuth, (req, res)=>{
     const storageMeta = getStorageMetadata();
     res.json({...config, storageMeta, webhookStatus: getWebhookStatus()});
   });
 
-  app.put('/api/config', asyncHandler(async (req, res)=>{
+  app.put('/api/config', requireRoles('admin'), asyncHandler(async (req, res)=>{
     const nextConfig = saveConfig(req.body || {});
     await initProvider(nextConfig);
     await setWebhookConfig(nextConfig.webhook);
@@ -85,38 +233,42 @@ async function bootstrap(){
     res.json({...config, storageMeta, webhookStatus: getWebhookStatus()});
   }));
 
-  app.get('/api/staff', asyncHandler(async (req, res)=>{
-    const provider = getProvider();
-    const staff = await provider.getStaff();
-    res.json(staff);
-  }));
+  app.get('/api/staff', requireAuth, (req, res)=>{
+    const directory = getRoleDirectory();
+    res.json({
+      leads: directory.leads,
+      operators: directory.operators,
+      stagecrew: directory.stagecrew,
+      pilots: directory.operators,
+      crew: directory.stagecrew,
+      monkeyLeads: directory.leads
+    });
+  });
 
-  app.put('/api/staff', asyncHandler(async (req, res)=>{
-    const provider = getProvider();
-    const staff = await provider.replaceStaff(req.body || {});
-    res.json(staff);
-  }));
+  app.put('/api/staff', requireRoles('admin'), (req, res)=>{
+    res.status(410).json({error: 'Manual staff editing disabled. Manage users instead.'});
+  });
 
-  app.get('/api/shows', asyncHandler(async (req, res)=>{
+  app.get('/api/shows', requireRoles('lead', 'operator', 'stagecrew'), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const shows = await provider.listShows();
     const storageMeta = getStorageMetadata();
     res.json({storage: storageMeta.label, storageMeta, webhook: getWebhookStatus(), shows});
   }));
 
-  app.get('/api/shows/archive', asyncHandler(async (req, res)=>{
+  app.get('/api/shows/archive', requireRoles('lead', 'operator', 'stagecrew'), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const shows = await provider.listArchivedShows();
     res.json({shows});
   }));
 
-  app.post('/api/shows', asyncHandler(async (req, res)=>{
+  app.post('/api/shows', requireRoles('lead'), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const show = await provider.createShow(req.body || {});
     res.status(201).json(show);
   }));
 
-  app.get('/api/shows/:id', asyncHandler(async (req, res)=>{
+  app.get('/api/shows/:id', requireRoles('lead', 'operator', 'stagecrew'), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const show = await provider.getShow(req.params.id);
     if(!show){
@@ -126,7 +278,7 @@ async function bootstrap(){
     res.json(show);
   }));
 
-  app.put('/api/shows/:id', asyncHandler(async (req, res)=>{
+  app.put('/api/shows/:id', requireRoles('lead'), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const show = await provider.updateShow(req.params.id, req.body || {});
     if(!show){
@@ -136,7 +288,7 @@ async function bootstrap(){
     res.json(show);
   }));
 
-  app.delete('/api/shows/:id', asyncHandler(async (req, res)=>{
+  app.delete('/api/shows/:id', requireRoles('lead'), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const archived = await provider.deleteShow(req.params.id);
     if(!archived){
@@ -147,7 +299,7 @@ async function bootstrap(){
     res.json(archived);
   }));
 
-  app.post('/api/shows/:id/archive', asyncHandler(async (req, res)=>{
+  app.post('/api/shows/:id/archive', requireRoles('lead'), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const archived = await provider.archiveShowNow(req.params.id);
     if(!archived){
@@ -158,7 +310,7 @@ async function bootstrap(){
     res.json(archived);
   }));
 
-  app.post('/api/webhook/simulate-month', asyncHandler(async (req, res)=>{
+  app.post('/api/webhook/simulate-month', requireRoles('admin'), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     if(!provider){
       res.status(503).json({error: 'Storage provider not ready'});
@@ -294,7 +446,7 @@ async function bootstrap(){
     });
   }));
 
-  app.post('/api/shows/:id/entries', asyncHandler(async (req, res)=>{
+  app.post('/api/shows/:id/entries', requireRoles('lead', 'operator'), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const entry = await provider.addEntry(req.params.id, req.body || {});
     if(!entry){
@@ -304,7 +456,7 @@ async function bootstrap(){
     res.status(201).json(entry);
   }));
 
-  app.put('/api/shows/:id/entries/:entryId', asyncHandler(async (req, res)=>{
+  app.put('/api/shows/:id/entries/:entryId', requireRoles('lead', 'operator'), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const entry = await provider.updateEntry(req.params.id, req.params.entryId, req.body || {});
     if(!entry){
@@ -314,7 +466,7 @@ async function bootstrap(){
     res.json(entry);
   }));
 
-  app.delete('/api/shows/:id/entries/:entryId', asyncHandler(async (req, res)=>{
+  app.delete('/api/shows/:id/entries/:entryId', requireRoles('lead', 'operator'), asyncHandler(async (req, res)=>{
     const provider = getProvider();
     const result = await provider.deleteEntry(req.params.id, req.params.entryId);
     if(!result){
@@ -324,7 +476,6 @@ async function bootstrap(){
     res.status(204).end();
   }));
 
-  // Serve index.html for any non-API request (client-side routing support)
   app.get(/^(?!\/api\/).*/, (req, res)=>{
     res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
   });
@@ -365,6 +516,95 @@ async function bootstrap(){
   }
 
   startListening(boundHost);
+}
+
+function normalizeRolesInput(input){
+  if(input === undefined || input === null){
+    return undefined;
+  }
+  if(Array.isArray(input)){
+    return input;
+  }
+  if(typeof input === 'string'){
+    return input.split(',').map(part => part.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function readSessionToken(req){
+  const header = req.headers?.cookie;
+  if(!header){
+    return null;
+  }
+  const cookies = header.split(';');
+  for(const cookie of cookies){
+    const trimmed = cookie.trim();
+    if(!trimmed){
+      continue;
+    }
+    if(trimmed.startsWith(`${SESSION_COOKIE_NAME}=`)){
+      return decodeURIComponent(trimmed.slice(SESSION_COOKIE_NAME.length + 1));
+    }
+  }
+  return null;
+}
+
+function setSessionCookie(res, token, expiresAt){
+  const maxAge = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+  const parts = [
+    `${SESSION_COOKIE_NAME}=${token}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${maxAge}`
+  ];
+  if(process.env.NODE_ENV === 'production'){
+    parts.push('Secure');
+  }
+  res.setHeader('Set-Cookie', parts.join('; '));
+}
+
+function clearSessionCookie(res){
+  const parts = [
+    `${SESSION_COOKIE_NAME}=`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    'Max-Age=0'
+  ];
+  if(process.env.NODE_ENV === 'production'){
+    parts.push('Secure');
+  }
+  res.setHeader('Set-Cookie', parts.join('; '));
+}
+
+function requireAuth(req, res, next){
+  if(!req.user){
+    res.status(401).json({error: 'Authentication required'});
+    return;
+  }
+  next();
+}
+
+function requireRoles(...roles){
+  const roleSet = new Set(roles);
+  return (req, res, next)=>{
+    if(!req.user){
+      res.status(401).json({error: 'Authentication required'});
+      return;
+    }
+    const userRoles = Array.isArray(req.user.roles) ? req.user.roles : [];
+    if(userRoles.includes('admin')){
+      next();
+      return;
+    }
+    const allowed = userRoles.some(role => roleSet.has(role));
+    if(!allowed){
+      res.status(403).json({error: 'Insufficient permissions'});
+      return;
+    }
+    next();
+  };
 }
 
 bootstrap().catch(err=>{

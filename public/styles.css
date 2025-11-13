@@ -33,6 +33,36 @@ body{
   -webkit-font-smoothing:antialiased;
   text-rendering:optimizeLegibility;
 }
+.auth-view{
+  min-height:100vh;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:var(--bg);
+  padding:40px 16px;
+}
+.auth-view[hidden]{display:none !important;}
+.auth-card{
+  width:min(100%, 460px);
+  background:var(--panel);
+  border:1px solid rgba(255,255,255,.1);
+  border-radius:24px;
+  padding:32px;
+  box-shadow:0 30px 60px rgba(0,0,0,.45);
+}
+.auth-card h1{margin-bottom:8px;font-size:24px;}
+.auth-logo{height:32px;width:auto;margin-bottom:20px;display:block;}
+.auth-form{display:flex;flex-direction:column;gap:12px;margin-top:12px;}
+.auth-form label{font-weight:600;font-size:14px;color:var(--text);}
+.auth-form input{
+  border:1px solid rgba(255,255,255,.15);
+  background:var(--input);
+  color:var(--text);
+  border-radius:12px;
+  padding:12px;
+  font-size:15px;
+}
+.auth-form .error{margin:0;}
 body.view-landing{
   background:var(--bg) url("./assets/woz_4d_m.jpg") center/cover no-repeat;
 }
@@ -47,19 +77,19 @@ a{color:var(--primary);text-decoration:none}
 }
 #roleHome{display:none}
 body.view-lead #roleHome,
-body.view-pilot #roleHome,
+body.view-operator #roleHome,
 body.view-archive #roleHome{display:inline-flex}
 #viewBadge{display:none}
 body.view-lead #viewBadge,
-body.view-pilot #viewBadge,
+body.view-operator #viewBadge,
 body.view-archive #viewBadge{display:inline-flex}
 body.view-landing #refreshShows{display:none}
 .view-lead-only,
-.view-pilot-only,
+.view-operator-only,
 .view-landing-only,
 .view-archive-only{display:none !important}
 body.view-lead .view-lead-only{display:block !important}
-body.view-pilot .view-pilot-only{display:block !important}
+body.view-operator .view-operator-only{display:block !important}
 body.view-landing .view-landing-only{display:block !important}
 body.view-archive .view-archive-only{display:block !important}
 #landingView{display:none;text-align:center;padding:38px 20px}
@@ -115,13 +145,13 @@ body.view-landing #landingView{display:block}
   line-height:1;
   color:var(--primary);
 }
-.view-badge-pilot{
+.view-badge-operator{
   color:#bff7d9;
 }
-.view-badge-pilot::before{
+.view-badge-operator::before{
   color:var(--success);
 }
-#pilotShowSummary{margin-top:8px;padding:10px 12px;border:1px dashed var(--border);border-radius:10px;background:rgba(255,255,255,.03);color:var(--text-dim);font-size:13px;text-align:left}
+#operatorShowSummary{margin-top:8px;padding:10px 12px;border:1px dashed var(--border);border-radius:10px;background:rgba(255,255,255,.03);color:var(--text-dim);font-size:13px;text-align:left}
 .app-shell{position:relative;min-height:100vh;overflow-x:hidden;}
 .app-main{
   position:relative;
@@ -165,9 +195,23 @@ body.menu-open .app-main{
   justify-self:start;
 }
 body.view-lead .topbar-actions,
-body.view-pilot .topbar-actions{
+body.view-operator .topbar-actions{
   justify-self:start;
 }
+.session-user{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:8px 14px;
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:14px;
+  background:rgba(14,16,22,.65);
+  box-shadow:0 8px 18px rgba(0,0,0,.35);
+}
+.session-user-text{display:flex;flex-direction:column;line-height:1.2;}
+.session-user strong{font-size:14px;}
+.session-user span{font-size:12px;color:var(--text-dim);}
+.session-user .btn{margin-left:auto;}
 .topbar-title{
   grid-area:title;
   margin-left:auto;
@@ -219,9 +263,43 @@ body.view-pilot .topbar-actions{
 }
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .grow{flex:1}
-.badge{
+.badge{  
   background:var(--chip); color:var(--text-dim); padding:6px 10px; border-radius:999px; font-size:12px; border:1px solid var(--border)
 }
+.badge.warn{background:rgba(255,184,77,.18);color:#ffda9c;border-color:rgba(255,184,77,.6);}
+.user-directory{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  padding:16px;
+  margin:16px 0;
+  border:1px dashed rgba(255,255,255,.2);
+  border-radius:14px;
+  background:rgba(11,18,30,.65);
+  max-height:260px;
+  overflow:auto;
+}
+.user-form{
+  padding:18px;
+  border:1px solid rgba(255,255,255,.18);
+  border-radius:16px;
+  background:rgba(8,15,25,.75);
+  box-shadow:0 16px 32px rgba(0,0,0,.35);
+}
+.user-row{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+  padding:12px 14px;
+  border:1px solid rgba(255,255,255,.15);
+  border-radius:12px;
+  background:rgba(20,26,38,.7);
+}
+.user-row-info{display:flex;flex-direction:column;gap:2px;}
+.user-row-info strong{font-size:15px;}
+.user-row-info span{font-size:13px;color:var(--text-dim);}
+.user-row-actions{display:flex;gap:8px;}
 .panel{
   background:var(--panel);
   border:1px solid var(--border);
@@ -742,12 +820,16 @@ input.is-invalid:focus, select.is-invalid:focus, textarea.is-invalid:focus{
   --btn-hover-border:#1d4ed8;
   --btn-hover-color:#f8faff;
 }
+.btn.role-btn.is-disabled{
+  opacity:.45;
+  pointer-events:none;
+}
 #chooseLead.btn.role-btn{
   --btn-hover-bg:#2563eb;
   --btn-hover-border:#1d4ed8;
   --btn-hover-color:#f8faff;
 }
-#choosePilot.btn.role-btn{
+#chooseOperator.btn.role-btn{
   --btn-hover-bg:#16a34a;
   --btn-hover-border:#15803d;
   --btn-hover-color:#f1fff7;

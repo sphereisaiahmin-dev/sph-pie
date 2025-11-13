@@ -5,9 +5,10 @@ This project exposes the **Drone Tracker** interface as a full web application b
 ## Features
 
 - Full-featured front-end built with HTML and CSS that retains the original look-and-feel and now surfaces a LAN connection dashboard for quick status checks.
+- Secure authentication and role-based access control (Admin, Lead, Operator, Stagecrew) with forced first-login password resets and session tokens.
 - Express.js backend API that manages shows, entries, and configuration.
 - Modular storage provider with SQL.js (default) and PostgreSQL backends. The SQL.js driver keeps zero-dependency persistence while PostgreSQL enables multi-user deployments.
-- Configurable application settings from the in-app settings panel (unit label, webhook delivery settings, and roster management).
+- Configurable application settings from the in-app settings panel (unit label, webhook delivery settings, and the user directory).
 - Optional per-entry webhook export that mirrors the CSV column structure so downstream tables align perfectly with local exports.
 - Archive workspace that retains shows for two months and supports CSV/JSON exports.
 - Entry editor modal with validation consistent with the original workflow.
@@ -30,7 +31,7 @@ This project exposes the **Drone Tracker** interface as a full web application b
 
    The app runs on [http://10.241.211.120:3000](http://10.241.211.120:3000) out of the box. Set the `HOST` and `PORT` environment variables before launching if you need a different binding (for example `HOST=0.0.0.0 node server/index.js`).
 
-3. Open the settings panel (hamburger button) to adjust the unit label, manage pilot/monkey lead/crew rosters, or to enable the webhook exporter. By default the app uses SQLite-on-WASM and stores data in `data/monkey-tracker.sqlite`.
+3. Navigate to [http://10.241.211.120:3000](http://10.241.211.120:3000) (or the host/port you configured) and sign in with one of the seeded accounts listed in `server/userStore.js`. Usernames are email addresses and every new account starts with the temporary password `adminsphere1`, which must be changed on first login. Admins (Isaiah Mincher and Zach Harvest by default) can then open the settings panel (hamburger button) to adjust the unit label, manage the user directory, and configure the webhook exporter. By default the app uses SQLite-on-WASM and stores data in `data/monkey-tracker.sqlite`.
 
 ## Configuration
 
@@ -60,9 +61,18 @@ Environment variables using the standard PostgreSQL naming scheme (`PGHOST`, `PG
 
 When PostgreSQL is active the UI updates the provider badge to “PostgreSQL v1” and all API responses surface the active driver in the `storageMeta` field. The server keeps feature parity with the SQL.js provider, including archive retention and roster seeding.
 
-### Roster management
+### User accounts & roles
 
-The settings panel maintains individual lists for pilots, IATSE monkey leads, and crew. Monkey leads start with Cleo, Bret, Leslie, and Dallas by default and can be customized to match the day's roster.
+Authentication is backed by the JSON user store in `data/users.json` (seeded from `server/userStore.js` on first launch). Accounts are defined by name, email, and one or more roles:
+
+- **Admin** – manage the user directory, reset passwords, configure storage/webhooks.
+- **Lead** – create/update shows and export archives.
+- **Operator** – log entries against active shows.
+- **Stagecrew** – appear in crew assignment lists and can view archives.
+
+Usernames are the email addresses listed in `server/userStore.js`. Every new account receives the temporary password `adminsphere1` and is forced to set a permanent password (minimum 12 characters with upper/lower case, number, and symbol) on first login. Only Admins can create users, update emails, toggle roles, or trigger password resets via the settings drawer.
+
+Workspace selectors automatically pull from the user directory: Lead dropdowns show Lead accounts, Operator pickers show Operator accounts, the Monkey Lead field uses Stagecrew assignments, and crew multi-selects use Stagecrew names as well. Manual textareas for roster maintenance have been removed in favor of the centralized directory.
 
 ### Webhook exporter
 

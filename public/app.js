@@ -7,7 +7,7 @@ const ISSUE_MAP = {
   'Motor or prop': ['no spin','desync','damage','unknown'],
   'Sensor or IMU': ['bias','calibration','saturation','unknown'],
   'Software or show control': ['cue timing','state desync','crash','unknown'],
-  'Pilot input': ['incorrect mode','early abort','missed cue','unknown'],
+  'Operator input': ['incorrect mode','early abort','missed cue','unknown'],
   Other: []
 };
 const PRIMARY_ISSUES = Object.keys(ISSUE_MAP);
@@ -110,6 +110,8 @@ function createEmptyShowDraft(){
 }
 
 const state = {
+  session: null,
+  appReady: false,
   config: null,
   unitLabel: 'Drone',
   shows: [],
@@ -150,10 +152,12 @@ const state = {
     headerCount: 0
   },
   staff: {
-    crew: [],
-    pilots: [],
-    monkeyLeads: []
-  }
+    stagecrew: [],
+    operators: [],
+    leads: []
+  },
+  users: [],
+  defaultTempPassword: 'adminsphere1'
 };
 
 const syncState = {
@@ -165,10 +169,36 @@ const syncState = {
 
 const ARCHIVE_CHART_COLORS = ['#16a34a', '#f97316', '#38bdf8', '#a855f7', '#facc15', '#f472b6', '#22d3ee'];
 let archiveChartInstance = null;
+let uiInitialized = false;
 
 const SYNC_CHANNEL_NAME = 'monkey-tracker-sync';
 
 const appTitle = el('appTitle');
+const loginScreen = el('loginScreen');
+const passwordResetScreen = el('passwordResetScreen');
+const appShell = el('appShell');
+const loginForm = el('loginForm');
+const loginEmailInput = el('loginEmail');
+const loginPasswordInput = el('loginPassword');
+const loginError = el('loginError');
+const passwordResetForm = el('passwordResetForm');
+const resetCurrentInput = el('resetCurrent');
+const resetNewInput = el('resetNew');
+const resetConfirmInput = el('resetConfirm');
+const passwordResetError = el('passwordResetError');
+const passwordResetLogoutBtn = el('passwordResetLogout');
+const sessionUserEl = el('sessionUser');
+const sessionNameEl = el('sessionName');
+const sessionRolesEl = el('sessionRoles');
+const logoutBtn = el('logoutBtn');
+const userDirectoryEl = el('userDirectory');
+const userForm = el('userForm');
+const userIdInput = el('userId');
+const userNameInput = el('userName');
+const userEmailInput = el('userEmail');
+const userFormStatus = el('userFormStatus');
+const userFormCancelBtn = el('userFormCancel');
+const userFormSubmitBtn = el('userFormSubmit');
 const unitLabelEl = el('unitLabel');
 const showDate = el('showDate');
 const showTime = el('showTime');
@@ -208,11 +238,6 @@ const configForm = el('configForm');
 const configMessage = el('configMessage');
 const configNavButtons = qsa('[data-config-target]');
 const configSections = qsa('[data-config-section]');
-const adminPinPrompt = el('adminPinPrompt');
-const adminPinInput = el('adminPinInput');
-const adminPinSubmit = el('adminPinSubmit');
-const adminPinCancel = el('adminPinCancel');
-const adminPinError = el('adminPinError');
 const unitLabelSelect = el('unitLabelSelect');
 const webhookEnabled = el('webhookEnabled');
 const webhookUrl = el('webhookUrl');
@@ -229,10 +254,10 @@ const webhookCancelBtn = el('webhookCancel');
 const roleHomeBtn = el('roleHome');
 const viewBadge = el('viewBadge');
 const chooseLeadBtn = el('chooseLead');
-const choosePilotBtn = el('choosePilot');
+const chooseOperatorBtn = el('chooseOperator');
 const chooseArchiveBtn = el('chooseArchive');
 const entryShowSelect = el('entryShowSelect');
-const pilotShowSummary = el('pilotShowSummary');
+const operatorShowSummary = el('operatorShowSummary');
 const archiveShowSelect = el('archiveShowSelect');
 const archiveDetails = el('archiveDetails');
 const archiveMeta = el('archiveMeta');
@@ -264,12 +289,7 @@ const providerBadge = el('providerBadge');
 const webhookBadge = el('webhookBadge');
 const refreshShowsBtn = el('refreshShows');
 const lanAddressEl = el('lanAddress');
-const pilotListInput = el('pilotList');
-const crewListInput = el('crewList');
-const monkeyLeadListInput = el('monkeyLeadList');
 
-const ADMIN_PIN = '4206';
-let adminUnlocked = false;
 let currentConfigSection = 'admin';
 let webhookModalSnapshot = null;
 
@@ -277,15 +297,25 @@ if(configPanel){
   configPanel.setAttribute('aria-hidden', 'true');
 }
 
-init().catch(err=>{
+bootstrap().catch(err=>{
   console.error(err);
   toast('Failed to initialise application', true);
 });
+
+async function bootstrap(){
+  initAuthUI();
+  await refreshSession();
+}
 
 async function init(){
   await loadConfig();
   updateConnectionIndicator('loading');
   await loadStaff();
+  if(isAdmin()){
+    await loadUsers();
+  }else{
+    state.users = [];
+  }
   await loadShows();
   initUI();
   setupSyncChannel();
@@ -294,9 +324,472 @@ async function init(){
   renderActionsChips(actionsChips, []);
   setCurrentShow(state.currentShowId || null);
   setView('landing');
+  state.appReady = true;
+}
+
+async function ensureAppReady(){
+  if(state.appReady){
+    return;
+  }
+  await init();
+  state.appReady = true;
+}
+
+function initAuthUI(){
+  if(loginForm){
+    loginForm.addEventListener('submit', onLoginSubmit);
+  }
+  if(passwordResetForm){
+    passwordResetForm.addEventListener('submit', onPasswordResetSubmit);
+  }
+  if(passwordResetLogoutBtn){
+    passwordResetLogoutBtn.addEventListener('click', ()=> logout());
+  }
+  if(logoutBtn){
+    logoutBtn.addEventListener('click', ()=> logout());
+  }
+  if(userDirectoryEl){
+    userDirectoryEl.addEventListener('click', onUserDirectoryClick);
+  }
+  if(userFormCancelBtn){
+    userFormCancelBtn.addEventListener('click', resetUserForm);
+  }
+  if(userFormSubmitBtn){
+    userFormSubmitBtn.addEventListener('click', onUserFormSubmit);
+  }
+  if(userForm){
+    userForm.addEventListener('keydown', handleUserFormKeydown);
+  }
+}
+
+async function refreshSession(){
+  try{
+    const data = await apiRequest('/api/auth/session', {method: 'GET', skipAuthHandlers: true});
+    if(data?.authenticated){
+      await handleSessionAuthenticated(data.user);
+    }else{
+      state.session = null;
+      updateSessionUi();
+      showLoginScreen();
+    }
+  }catch(err){
+    console.error('Failed to fetch session', err);
+    state.session = null;
+    updateSessionUi();
+    showLoginScreen();
+  }
+}
+
+async function handleSessionAuthenticated(user){
+  state.session = user || null;
+  if(!isAdmin()){
+    state.users = [];
+  }
+  updateSessionUi();
+  if(state.session?.needsPasswordReset){
+    clearPasswordResetForm();
+    showPasswordResetScreen();
+    return;
+  }
+  await ensureAppReady();
+  if(isAdmin() && !state.users.length){
+    await loadUsers();
+  }
+  showAppShell();
+}
+
+function showLoginScreen(){
+  if(loginScreen){
+    loginScreen.hidden = false;
+  }
+  if(passwordResetScreen){
+    passwordResetScreen.hidden = true;
+  }
+  if(appShell){
+    appShell.hidden = true;
+  }
+}
+
+function showPasswordResetScreen(){
+  if(loginScreen){
+    loginScreen.hidden = true;
+  }
+  if(passwordResetScreen){
+    passwordResetScreen.hidden = false;
+  }
+  if(appShell){
+    appShell.hidden = true;
+  }
+}
+
+function showAppShell(){
+  if(loginScreen){
+    loginScreen.hidden = true;
+  }
+  if(passwordResetScreen){
+    passwordResetScreen.hidden = true;
+  }
+  if(appShell){
+    appShell.hidden = false;
+  }
+}
+
+function updateSessionUi(){
+  if(sessionUserEl){
+    if(state.session){
+      sessionUserEl.hidden = false;
+      sessionNameEl.textContent = state.session.name || state.session.email || 'Account';
+      sessionRolesEl.textContent = formatRoleList(state.session.roles || []);
+    }else{
+      sessionUserEl.hidden = true;
+    }
+  }
+  if(configBtn){
+    const admin = isAdmin();
+    configBtn.hidden = !admin;
+    configBtn.disabled = !admin;
+  }
+  if(cancelConfigBtn){
+    cancelConfigBtn.disabled = !isAdmin();
+  }
+  if(isAdmin()){
+    renderUserDirectory();
+  }else if(userDirectoryEl){
+    userDirectoryEl.innerHTML = '<p class="help">Admin access required.</p>';
+  }
+  updateWorkspaceAvailability();
+}
+
+function formatRoleList(roles = []){
+  if(!Array.isArray(roles) || !roles.length){
+    return '';
+  }
+  return roles.map(role => role.charAt(0).toUpperCase() + role.slice(1)).join(', ');
+}
+
+function updateWorkspaceAvailability(){
+  if(chooseLeadBtn){
+    const allowed = userHasRole('lead');
+    chooseLeadBtn.disabled = !allowed;
+    chooseLeadBtn.classList.toggle('is-disabled', !allowed);
+  }
+  if(chooseOperatorBtn){
+    const allowed = userHasRole('operator');
+    chooseOperatorBtn.disabled = !allowed;
+    chooseOperatorBtn.classList.toggle('is-disabled', !allowed);
+  }
+  if(chooseArchiveBtn){
+    const allowed = userHasRole('lead') || userHasRole('operator') || userHasRole('stagecrew');
+    chooseArchiveBtn.disabled = !allowed;
+    chooseArchiveBtn.classList.toggle('is-disabled', !allowed);
+  }
+}
+
+async function onLoginSubmit(event){
+  event.preventDefault();
+  const email = loginEmailInput?.value ? loginEmailInput.value.trim() : '';
+  const password = loginPasswordInput?.value || '';
+  if(!email || !password){
+    if(loginError){
+      loginError.textContent = 'Email and password are required';
+      loginError.hidden = false;
+    }
+    return;
+  }
+  try{
+    if(loginError){ loginError.hidden = true; }
+    const result = await apiRequest('/api/auth/login', {
+      method: 'POST',
+      body: {email, password},
+      skipAuthHandlers: true
+    });
+    if(result?.user){
+      await handleSessionAuthenticated(result.user);
+      loginPasswordInput.value = '';
+    }
+  }catch(err){
+    console.error('Login failed', err);
+    if(loginError){
+      loginError.textContent = err.message || 'Login failed';
+      loginError.hidden = false;
+    }
+  }
+}
+
+async function onPasswordResetSubmit(event){
+  event.preventDefault();
+  const currentPassword = resetCurrentInput?.value || '';
+  const nextPassword = resetNewInput?.value || '';
+  const confirmPassword = resetConfirmInput?.value || '';
+  if(!currentPassword || !nextPassword){
+    if(passwordResetError){
+      passwordResetError.textContent = 'Enter your current and new password.';
+      passwordResetError.hidden = false;
+    }
+    return;
+  }
+  if(nextPassword !== confirmPassword){
+    if(passwordResetError){
+      passwordResetError.textContent = 'Passwords do not match';
+      passwordResetError.hidden = false;
+    }
+    return;
+  }
+  try{
+    if(passwordResetError){ passwordResetError.hidden = true; }
+    const result = await apiRequest('/api/auth/password', {
+      method: 'POST',
+      body: {currentPassword, newPassword: nextPassword}
+    });
+    if(result?.user){
+      state.session = result.user;
+      updateSessionUi();
+      toast('Password updated');
+      showAppShell();
+      await ensureAppReady();
+    }
+  }catch(err){
+    console.error('Password reset failed', err);
+    if(passwordResetError){
+      passwordResetError.textContent = err.message || 'Password update failed';
+      passwordResetError.hidden = false;
+    }
+  }
+}
+
+async function logout(){
+  try{
+    await apiRequest('/api/auth/logout', {method: 'POST', skipAuthHandlers: true});
+  }catch(err){
+    console.error('Failed to log out', err);
+  }finally{
+    window.location.reload();
+  }
+}
+
+function clearPasswordResetForm(){
+  if(resetCurrentInput){ resetCurrentInput.value = ''; }
+  if(resetNewInput){ resetNewInput.value = ''; }
+  if(resetConfirmInput){ resetConfirmInput.value = ''; }
+  if(passwordResetError){ passwordResetError.hidden = true; }
+}
+
+function handleSessionExpired(){
+  state.session = null;
+  state.appReady = false;
+  state.users = [];
+  updateSessionUi();
+  showLoginScreen();
+}
+
+function handlePasswordResetRequired(){
+  if(state.session){
+    state.session.needsPasswordReset = true;
+  }
+  showPasswordResetScreen();
+}
+
+function userHasRole(role){
+  if(!role){
+    return false;
+  }
+  const roles = Array.isArray(state.session?.roles) ? state.session.roles : [];
+  if(roles.includes('admin')){
+    return true;
+  }
+  return roles.includes(role);
+}
+
+function isAdmin(){
+  const roles = Array.isArray(state.session?.roles) ? state.session.roles : [];
+  return roles.includes('admin');
+}
+
+async function loadUsers(){
+  if(!isAdmin()){
+    state.users = [];
+    renderUserDirectory();
+    return;
+  }
+  try{
+    const data = await apiRequest('/api/users');
+    state.users = Array.isArray(data.users) ? data.users : [];
+    if(data?.defaultPassword){
+      state.defaultTempPassword = data.defaultPassword;
+    }
+    renderUserDirectory();
+  }catch(err){
+    console.error('Failed to load users', err);
+    if(userFormStatus){
+      userFormStatus.textContent = err.message || 'Failed to load users';
+      userFormStatus.classList.add('error');
+    }
+  }
+}
+
+function renderUserDirectory(){
+  if(!userDirectoryEl){
+    return;
+  }
+  if(!isAdmin()){
+    userDirectoryEl.innerHTML = '<p class="help">Admin access required.</p>';
+    return;
+  }
+  const users = Array.isArray(state.users) ? state.users.slice().sort((a, b)=> (a.name || '').localeCompare(b.name || '', undefined, {sensitivity: 'base'})) : [];
+  if(!users.length){
+    userDirectoryEl.innerHTML = '<p class="help">No user accounts yet.</p>';
+    return;
+  }
+  const rows = users.map(user =>{
+    const roles = formatRoleList(user.roles || []);
+    const resetBadge = user.needsPasswordReset ? '<span class="badge warn">Reset required</span>' : '';
+    return `<div class="user-row">
+      <div class="user-row-info">
+        <strong>${escapeHtml(user.name || user.email || 'User')}</strong>
+        <span>${escapeHtml(user.email || '')}</span>
+        <span class="help">${escapeHtml(roles || 'No roles')}</span>
+        ${resetBadge}
+      </div>
+      <div class="user-row-actions">
+        <button type="button" class="btn ghost small" data-edit-user="${user.id}">Edit</button>
+        <button type="button" class="btn ghost small" data-reset-user="${user.id}">Reset password</button>
+      </div>
+    </div>`;
+  }).join('');
+  userDirectoryEl.innerHTML = rows;
+}
+
+function onUserDirectoryClick(event){
+  const editBtn = event.target.closest('[data-edit-user]');
+  if(editBtn){
+    startUserEdit(editBtn.dataset.editUser);
+    return;
+  }
+  const resetBtn = event.target.closest('[data-reset-user]');
+  if(resetBtn){
+    resetUserPasswordFor(resetBtn.dataset.resetUser);
+  }
+}
+
+function startUserEdit(userId){
+  if(!isAdmin() || !userForm){
+    return;
+  }
+  const user = state.users.find(u => u.id === userId);
+  if(!user){
+    return;
+  }
+  userIdInput.value = user.id;
+  userNameInput.value = user.name || '';
+  userEmailInput.value = user.email || '';
+  const roleInputs = userForm.querySelectorAll('input[name="userRole"]');
+  roleInputs.forEach(input =>{
+    input.checked = Array.isArray(user.roles) ? user.roles.includes(input.value) : false;
+  });
+  if(userFormStatus){
+    userFormStatus.textContent = 'Editing existing user';
+    userFormStatus.classList.remove('error');
+  }
+}
+
+function resetUserForm(){
+  if(!userForm){
+    return;
+  }
+  userIdInput.value = '';
+  userNameInput.value = '';
+  userEmailInput.value = '';
+  const roleInputs = userForm.querySelectorAll('input[name="userRole"]');
+  roleInputs.forEach(input =>{ input.checked = false; });
+  if(userFormStatus){
+    userFormStatus.textContent = '';
+    userFormStatus.classList.remove('error');
+  }
+}
+
+function getSelectedUserRoles(){
+  if(!userForm){
+    return [];
+  }
+  const roleInputs = userForm.querySelectorAll('input[name="userRole"]:checked');
+  return Array.from(roleInputs).map(input => input.value);
+}
+
+function handleUserFormKeydown(event){
+  if(event.key !== 'Enter' || event.shiftKey){
+    return;
+  }
+  const target = event.target;
+  if(!target){
+    return;
+  }
+  const tag = target.tagName;
+  if(tag !== 'INPUT' && tag !== 'SELECT'){
+    return;
+  }
+  event.preventDefault();
+  onUserFormSubmit();
+}
+
+async function onUserFormSubmit(event){
+  if(event && typeof event.preventDefault === 'function'){
+    event.preventDefault();
+  }
+  if(!isAdmin()){
+    toast('Admin access required', true);
+    return;
+  }
+  const name = userNameInput?.value ? userNameInput.value.trim() : '';
+  const email = userEmailInput?.value ? userEmailInput.value.trim() : '';
+  const roles = getSelectedUserRoles();
+  if(!name || !email || !roles.length){
+    if(userFormStatus){
+      userFormStatus.textContent = 'Name, email and at least one role are required';
+      userFormStatus.classList.add('error');
+    }
+    return;
+  }
+  const payload = {name, email, roles};
+  const userId = userIdInput?.value ? userIdInput.value.trim() : '';
+  try{
+    if(userId){
+      await apiRequest(`/api/users/${userId}`, {method: 'PUT', body: payload});
+      toast('User updated');
+    }else{
+      await apiRequest('/api/users', {method: 'POST', body: payload});
+      toast('User created');
+    }
+    resetUserForm();
+    await loadUsers();
+    await loadStaff();
+    notifyStaffChanged();
+  }catch(err){
+    console.error('Failed to save user', err);
+    if(userFormStatus){
+      userFormStatus.textContent = err.message || 'Failed to save user';
+      userFormStatus.classList.add('error');
+    }
+  }
+}
+
+async function resetUserPasswordFor(userId){
+  if(!isAdmin() || !userId){
+    return;
+  }
+  try{
+    await apiRequest(`/api/users/${userId}/reset-password`, {method: 'POST'});
+    toast(`Password reset. New temp password: ${state.defaultTempPassword}`);
+    await loadUsers();
+  }catch(err){
+    console.error('Failed to reset password', err);
+    toast(err.message || 'Failed to reset password', true);
+  }
 }
 
 function initUI(){
+  if(uiInitialized){
+    return;
+  }
   [stCompleted, stNoLaunch, stAbort].forEach(btn=>{
     btn.addEventListener('click', ()=>{
       setStatus(btn.dataset.status);
@@ -332,15 +825,31 @@ function initUI(){
   }
   if(chooseLeadBtn){
     chooseLeadBtn.addEventListener('click', ()=>{
+      if(!userHasRole('lead')){
+        toast('Lead workspace requires Lead role', true);
+        return;
+      }
       setView('lead');
       setCurrentShow(state.currentShowId || (state.shows[0]?.id ?? null));
     });
   }
-  if(choosePilotBtn){
-    choosePilotBtn.addEventListener('click', ()=> setView('pilot'));
+  if(chooseOperatorBtn){
+    chooseOperatorBtn.addEventListener('click', ()=>{
+      if(!userHasRole('operator')){
+        toast('Operator workspace requires Operator role', true);
+        return;
+      }
+      setView('operator');
+    });
   }
   if(chooseArchiveBtn){
-    chooseArchiveBtn.addEventListener('click', openArchiveWorkspace);
+    chooseArchiveBtn.addEventListener('click', ()=>{
+      if(!userHasRole('lead') && !userHasRole('operator') && !userHasRole('stagecrew')){
+        toast('Archive workspace requires a workspace role', true);
+        return;
+      }
+      openArchiveWorkspace();
+    });
   }
   if(archiveShowSelect){
     archiveShowSelect.addEventListener('change', ()=>{
@@ -378,36 +887,23 @@ function initUI(){
   el('closeEdit').addEventListener('click', closeEditModal);
   el('saveEdit').addEventListener('click', saveEditEntry);
 
-  configBtn.addEventListener('click', ()=> toggleConfig());
-  cancelConfigBtn.addEventListener('click', ()=> toggleConfig(false));
+  if(configBtn){
+    configBtn.addEventListener('click', ()=> toggleConfig());
+  }
+  if(cancelConfigBtn){
+    cancelConfigBtn.addEventListener('click', ()=> toggleConfig(false));
+  }
   if(configNavButtons.length){
     configNavButtons.forEach(btn=>{
       btn.setAttribute('aria-pressed', btn.classList.contains('is-active') ? 'true' : 'false');
       btn.addEventListener('click', ()=>{
-        const target = btn.dataset.configTarget;
-        if(target === 'admin' && !adminUnlocked){
-          openAdminPinPrompt();
+        if(!isAdmin()){
+          toast('Admin access required', true);
           return;
         }
+        const target = btn.dataset.configTarget;
         setConfigSection(target || 'admin');
       });
-    });
-  }
-  if(adminPinSubmit){
-    adminPinSubmit.addEventListener('click', submitAdminPin);
-  }
-  if(adminPinCancel){
-    adminPinCancel.addEventListener('click', ()=>{
-      closeAdminPinPrompt();
-      toggleConfig(false);
-    });
-  }
-  if(adminPinInput){
-    adminPinInput.addEventListener('keydown', event=>{
-      if(event.key === 'Enter'){
-        event.preventDefault();
-        submitAdminPin();
-      }
     });
   }
   document.addEventListener('keydown', e=>{
@@ -526,23 +1022,21 @@ async function loadConfig(){
 async function loadStaff(){
   try{
     const data = await apiRequest('/api/staff');
-    const crew = normalizeNameList(Array.isArray(data.crew) ? data.crew : [], {sort: true});
-    const pilots = normalizeNameList(Array.isArray(data.pilots) ? data.pilots : [], {sort: true});
-    const monkeyLeads = normalizeNameList(Array.isArray(data.monkeyLeads) ? data.monkeyLeads : [], {sort: true});
-    state.staff = {crew, pilots, monkeyLeads};
+    const stagecrew = normalizeNameList(Array.isArray(data.stagecrew) ? data.stagecrew : (Array.isArray(data.crew) ? data.crew : []), {sort: true});
+    const operators = normalizeNameList(Array.isArray(data.operators) ? data.operators : (Array.isArray(data.pilots) ? data.pilots : []), {sort: true});
+    const leads = normalizeNameList(Array.isArray(data.leads) ? data.leads : (Array.isArray(data.monkeyLeads) ? data.monkeyLeads : []), {sort: true});
+    state.staff = {stagecrew, operators, leads};
   }catch(err){
     console.error('Failed to load staff', err);
-    if(!state.staff){
-      state.staff = {crew: [], pilots: [], monkeyLeads: []};
-    }else{
-      state.staff.crew = [];
-      state.staff.pilots = [];
-      state.staff.monkeyLeads = [];
-    }
+    state.staff = state.staff || {stagecrew: [], operators: [], leads: []};
+    state.staff.stagecrew = [];
+    state.staff.operators = [];
+    state.staff.leads = [];
     toast('Failed to load staff directory', true);
   }
-  populateStaffSettings();
   renderOperatorOptions();
+  renderCrewOptions(getCurrentShow()?.crew || []);
+  renderPilotAssignments(getCurrentShow());
   renderShowHeaderDraft();
 }
 
@@ -803,7 +1297,7 @@ async function refreshShowsFromSync(detail = {}){
   }else{
     targetId = state.shows[0]?.id || null;
   }
-  setCurrentShow(targetId, {skipPilotSync: false});
+  setCurrentShow(targetId, {skipOperatorSync: false});
 }
 
 async function refreshStaffFromSync(){
@@ -834,7 +1328,7 @@ function getCurrentShow(){
 }
 
 function setCurrentShow(showId, options = {}){
-  const {skipPilotSync = false, skipRender = false} = options;
+  const {skipOperatorSync = false, skipRender = false} = options;
   state.currentShowId = showId || null;
   renderOperatorOptions();
   updateIssueVisibility();
@@ -842,16 +1336,16 @@ function setCurrentShow(showId, options = {}){
     renderGroups();
   }
   updateWebhookPreview();
-  if(!skipPilotSync){
-    syncPilotShowSelect();
+  if(!skipOperatorSync){
+    syncOperatorShowSelect();
   }else{
-    updatePilotSummary();
+    updateOperatorSummary();
   }
 }
 
-function syncPilotShowSelect(){
+function syncOperatorShowSelect(){
   if(!entryShowSelect){
-    updatePilotSummary();
+    updateOperatorSummary();
     return;
   }
   const shows = state.shows.slice();
@@ -859,7 +1353,7 @@ function syncPilotShowSelect(){
     entryShowSelect.innerHTML = '<option value="">No shows available</option>';
     entryShowSelect.disabled = true;
     entryShowSelect.value = '';
-    updatePilotSummary();
+    updateOperatorSummary();
     return;
   }
   entryShowSelect.disabled = false;
@@ -873,19 +1367,19 @@ function syncPilotShowSelect(){
   const selectedId = hasCurrent ? state.currentShowId : shows[0].id;
   entryShowSelect.value = selectedId;
   if(!hasCurrent){
-    setCurrentShow(selectedId, {skipPilotSync: true});
+    setCurrentShow(selectedId, {skipOperatorSync: true});
   }else{
-    updatePilotSummary();
+    updateOperatorSummary();
   }
 }
 
-function updatePilotSummary(){
-  if(!pilotShowSummary){
+function updateOperatorSummary(){
+  if(!operatorShowSummary){
     return;
   }
   const show = getCurrentShow();
   if(!show){
-    pilotShowSummary.textContent = 'Lead must create a show before logging entries.';
+    operatorShowSummary.textContent = 'Lead must create a show before logging entries.';
     return;
   }
   const date = formatDateUS(show.date) || 'Date TBD';
@@ -894,7 +1388,7 @@ function updatePilotSummary(){
   if(show.label){ parts.push(show.label); }
   if(show.leadPilot){ parts.push(`Lead: ${show.leadPilot}`); }
   if(show.monkeyLead){ parts.push(`Monkey lead: ${show.monkeyLead}`); }
-  pilotShowSummary.textContent = parts.join(' • ');
+  operatorShowSummary.textContent = parts.join(' • ');
 }
 
 function renderArchiveSelect(){
@@ -2184,7 +2678,7 @@ function renderArchiveDetails(show){
     ['Date', formatDateUS(show.date) || show.date || '—'],
     ['Time', formatTime12Hour(show.time) || show.time || '—'],
     ['Label', show.label || '—'],
-    ['Lead pilot', show.leadPilot || '—'],
+    ['Lead', show.leadPilot || '—'],
     ['Monkey lead', show.monkeyLead || '—'],
     ['Crew', crewList],
     ['Entries logged', entries.length]
@@ -2530,14 +3024,14 @@ function syncArchiveChartSelection(){
     state.selectedArchiveChartShows = filtered.map(show => show.id);
     return;
   }
-  const pilotFiltered = getFilteredArchivedShows(shows, {includeDateFilter: false});
+  const operatorFiltered = getFilteredArchivedShows(shows, {includeDateFilter: false});
   if(!Array.isArray(state.selectedArchiveChartShows)){
-    state.selectedArchiveChartShows = pilotFiltered.length
-      ? pilotFiltered.slice(0, Math.min(5, pilotFiltered.length)).map(show => show.id)
+    state.selectedArchiveChartShows = operatorFiltered.length
+      ? operatorFiltered.slice(0, Math.min(5, operatorFiltered.length)).map(show => show.id)
       : [];
     return;
   }
-  const available = new Set(pilotFiltered.map(show => show.id));
+  const available = new Set(operatorFiltered.map(show => show.id));
   const nextSelection = state.selectedArchiveChartShows.filter(id => available.has(id));
   state.selectedArchiveChartShows = nextSelection;
 }
@@ -2700,7 +3194,7 @@ function ensureShowHeaderValid(values, options = {}){
     {key: 'date', label: 'Date', element: showDate},
     {key: 'time', label: 'Show start time', element: showTime},
     {key: 'label', label: 'Show label', element: showLabel},
-    {key: 'leadPilot', label: 'Lead pilot', element: leadPilotSelect},
+    {key: 'leadPilot', label: 'Lead', element: leadPilotSelect},
     {key: 'monkeyLead', label: 'Monkey lead', element: monkeyLeadSelect}
   ];
   let firstInvalid = null;
@@ -2892,7 +3386,7 @@ async function archiveShowNow(showId){
     setCurrentShow(fallbackId);
   }else{
     renderGroups();
-    syncPilotShowSelect();
+    syncOperatorShowSelect();
   }
   await loadArchivedShows({silent: true, preserveSelection: true});
   if(archivedPayload && archivedPayload.id){
@@ -2928,7 +3422,7 @@ async function deleteShow(showId){
     setCurrentShow(fallbackId);
   }else{
     renderGroups();
-    syncPilotShowSelect();
+    syncOperatorShowSelect();
   }
   await loadArchivedShows({silent: true, preserveSelection: true});
   if(archivedPayload && archivedPayload.id){
@@ -2939,8 +3433,8 @@ async function deleteShow(showId){
 }
 
 async function onAddLine(){
-  if(state.currentView !== 'pilot'){
-    toast('Switch to the Pilot workspace to log entries', true);
+  if(state.currentView !== 'operator'){
+    toast('Switch to the Operator workspace to log entries', true);
     return;
   }
   const show = getCurrentShow();
@@ -3416,14 +3910,14 @@ function buildEntryFieldsClone(entry, show){
   fields.push(actionsContainer);
 
   const operatorSelect = document.createElement('select');
-  const pilots = getPilotNames([entry.operator, show?.leadPilot]);
-  if(pilots.length){
-    operatorSelect.innerHTML = '<option value="">Select</option>' + pilots.map(name=>`<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
+  const operatorNames = getOperatorNames([entry.operator, show?.leadPilot]);
+  if(operatorNames.length){
+    operatorSelect.innerHTML = '<option value="">Select</option>' + operatorNames.map(name=>`<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
     operatorSelect.disabled = false;
-    const match = pilots.find(name => name.toLowerCase() === (entry.operator || '').toLowerCase());
+    const match = operatorNames.find(name => name.toLowerCase() === (entry.operator || '').toLowerCase());
     operatorSelect.value = match || '';
   }else{
-    operatorSelect.innerHTML = '<option value="">Add pilots in settings</option>';
+    operatorSelect.innerHTML = '<option value="">Add operators via admin settings</option>';
     operatorSelect.disabled = true;
   }
   fields.push(wrap(createLabelWrap('edit_operator', 'Operator', operatorSelect)));
@@ -3487,9 +3981,9 @@ function renderOperatorOptions(){
     return;
   }
   const current = operator.value;
-  const names = getPilotNames([current]);
+  const names = getOperatorNames([current]);
   if(!names.length){
-    operator.innerHTML = '<option value="">Add pilots in settings</option>';
+    operator.innerHTML = '<option value="">Add operators via admin settings</option>';
     operator.value = '';
     operator.disabled = true;
     return;
@@ -3508,24 +4002,36 @@ function renderOperatorOptions(){
 }
 
 function setView(view){
+  if(view === 'lead' && !userHasRole('lead')){
+    toast('Lead workspace requires Lead role', true);
+    return;
+  }
+  if(view === 'operator' && !userHasRole('operator')){
+    toast('Operator workspace requires Operator role', true);
+    return;
+  }
+  if(view === 'archive' && !userHasRole('lead') && !userHasRole('operator') && !userHasRole('stagecrew')){
+    toast('Archive workspace requires a workspace role', true);
+    return;
+  }
   state.currentView = view;
-  document.body.classList.remove('view-landing','view-lead','view-pilot','view-archive');
+  document.body.classList.remove('view-landing','view-lead','view-operator','view-archive');
   document.body.classList.add(`view-${view}`);
   if(viewBadge){
     if(view === 'landing'){
       viewBadge.hidden = true;
-      viewBadge.classList.remove('view-badge-pilot');
+      viewBadge.classList.remove('view-badge-operator');
     }else{
       viewBadge.hidden = false;
-      if(view === 'pilot'){
-        viewBadge.textContent = 'Pilot workspace';
-        viewBadge.classList.add('view-badge-pilot');
+      if(view === 'operator'){
+        viewBadge.textContent = 'Operator workspace';
+        viewBadge.classList.add('view-badge-operator');
       }else if(view === 'archive'){
         viewBadge.textContent = 'Archive workspace';
-        viewBadge.classList.remove('view-badge-pilot');
+        viewBadge.classList.remove('view-badge-operator');
       }else{
         viewBadge.textContent = 'Lead workspace';
-        viewBadge.classList.remove('view-badge-pilot');
+        viewBadge.classList.remove('view-badge-operator');
       }
     }
   }
@@ -3535,10 +4041,10 @@ function setView(view){
   if(view === 'landing'){
     toggleConfig(false);
   }
-  if(view === 'pilot'){
-    syncPilotShowSelect();
+  if(view === 'operator'){
+    syncOperatorShowSelect();
   }else{
-    updatePilotSummary();
+    updateOperatorSummary();
   }
   if(view === 'archive'){
     renderArchiveSelect();
@@ -3546,6 +4052,10 @@ function setView(view){
 }
 
 function toggleConfig(force){
+  if(!isAdmin()){
+    toast('Admin access required', true);
+    return;
+  }
   const shouldOpen = typeof force === 'boolean'
     ? force
     : !document.body.classList.contains('menu-open');
@@ -3565,12 +4075,10 @@ function toggleConfig(force){
   if(shouldOpen){
     configMessage.textContent = '';
     setConfigSection('admin');
-    if(!adminUnlocked){
-      openAdminPinPrompt();
+    if(isAdmin()){
+      loadUsers();
     }
   }else{
-    adminUnlocked = false;
-    closeAdminPinPrompt();
     setConfigSection('admin');
   }
 }
@@ -3588,12 +4096,6 @@ function refreshDrawerOffset(){
 
 function setConfigSection(section){
   currentConfigSection = section;
-  if(section !== 'admin'){
-    if(adminUnlocked){
-      adminUnlocked = false;
-    }
-    closeAdminPinPrompt();
-  }
   if(configSections.length){
     configSections.forEach(sec=>{
       const isActive = sec.dataset.configSection === section;
@@ -3610,70 +4112,15 @@ function setConfigSection(section){
   }
 }
 
-function openAdminPinPrompt(){
-  if(adminUnlocked){
-    setConfigSection('admin');
-    return;
-  }
-  if(adminPinPrompt){
-    adminPinPrompt.hidden = false;
-    adminPinPrompt.setAttribute('aria-hidden', 'false');
-    if(adminPinError){
-      adminPinError.hidden = true;
-    }
-    if(adminPinInput){
-      adminPinInput.value = '';
-      requestAnimationFrame(()=> adminPinInput.focus());
-    }
-    return;
-  }
-  const pin = window.prompt('Enter admin PIN');
-  if(pin === ADMIN_PIN){
-    adminUnlocked = true;
-    setConfigSection('admin');
-  }else if(pin !== null){
-    toast('Incorrect PIN', true);
-  }
-}
 
-function closeAdminPinPrompt(){
-  if(adminPinPrompt){
-    adminPinPrompt.hidden = true;
-    adminPinPrompt.setAttribute('aria-hidden', 'true');
-  }
-  if(adminPinInput){
-    adminPinInput.value = '';
-  }
-  if(adminPinError){
-    adminPinError.hidden = true;
-  }
-}
 
-function submitAdminPin(){
-  if(!adminPinInput){
-    return;
-  }
-  const value = adminPinInput.value ? adminPinInput.value.trim() : '';
-  if(value === ADMIN_PIN){
-    adminUnlocked = true;
-    closeAdminPinPrompt();
-    setConfigSection('admin');
-  }else{
-    if(adminPinError){
-      adminPinError.hidden = false;
-    }
-    adminPinInput.focus();
-    adminPinInput.select?.();
-  }
-}
 
 async function onConfigSubmit(event){
   event.preventDefault();
-  const staffPayload = {
-    pilots: parseStaffTextarea(pilotListInput ? pilotListInput.value : ''),
-    monkeyLeads: parseStaffTextarea(monkeyLeadListInput ? monkeyLeadListInput.value : ''),
-    crew: parseStaffTextarea(crewListInput ? crewListInput.value : '')
-  };
+  if(!isAdmin()){
+    toast('Admin access required', true);
+    return;
+  }
   const payload = {
     unitLabel: unitLabelSelect.value,
     webhook: {
@@ -3684,25 +4131,6 @@ async function onConfigSubmit(event){
       headers: parseHeadersText(webhookHeaders ? webhookHeaders.value : '')
     }
   };
-  try{
-    const savedStaff = await apiRequest('/api/staff', {method: 'PUT', body: JSON.stringify(staffPayload)});
-    state.staff = {
-      pilots: normalizeNameList(savedStaff?.pilots || [], {sort: true}),
-      monkeyLeads: normalizeNameList(savedStaff?.monkeyLeads || [], {sort: true}),
-      crew: normalizeNameList(savedStaff?.crew || [], {sort: true})
-    };
-    populateStaffSettings();
-    renderCrewOptions(getCurrentShow()?.crew || []);
-    renderPilotAssignments(getCurrentShow());
-    ensureShowHeaderValid();
-    renderOperatorOptions();
-    notifyStaffChanged();
-  }catch(err){
-    console.error(err);
-    configMessage.textContent = err.message || 'Failed to save staff';
-    toast(err.message || 'Failed to save staff', true);
-    return;
-  }
   try{
     const updated = await apiRequest('/api/config', {method:'PUT', body: JSON.stringify(payload)});
     state.config = updated;
@@ -4325,7 +4753,9 @@ function toNumber(value){
 }
 
 async function apiRequest(url, options){
-  const opts = options || {};
+  const opts = options ? {...options} : {};
+  const skipAuthHandlers = Boolean(opts.skipAuthHandlers);
+  delete opts.skipAuthHandlers;
   if(opts.body && typeof opts.body !== 'string'){
     opts.body = JSON.stringify(opts.body);
   }
@@ -4342,41 +4772,30 @@ async function apiRequest(url, options){
   }
   if(!res.ok){
     const message = data && data.error ? data.error : `Request failed (${res.status})`;
+    if(!skipAuthHandlers){
+      if(res.status === 401){
+        handleSessionExpired();
+      }else if(res.status === 423){
+        handlePasswordResetRequired();
+      }
+    }
     throw new Error(message);
   }
   return data;
 }
 
-function populateStaffSettings(){
-  if(pilotListInput){
-    pilotListInput.value = (state.staff?.pilots || []).join('\n');
-  }
-  if(monkeyLeadListInput){
-    monkeyLeadListInput.value = (state.staff?.monkeyLeads || []).join('\n');
-  }
-  if(crewListInput){
-    crewListInput.value = (state.staff?.crew || []).join('\n');
-  }
+
+
+function getOperatorNames(additional = []){
+  return normalizeNameList([state.staff?.operators || [], additional], {sort: true});
 }
 
-function parseStaffTextarea(value){
-  if(typeof value !== 'string'){
-    return [];
-  }
-  const lines = value.split(/\r?\n/);
-  return normalizeNameList(lines, {sort: true});
+function getStagecrewNames(additional = []){
+  return normalizeNameList([state.staff?.stagecrew || [], additional], {sort: true});
 }
 
-function getPilotNames(additional = []){
-  return normalizeNameList([state.staff?.pilots || [], additional], {sort: true});
-}
-
-function getCrewNames(additional = []){
-  return normalizeNameList([state.staff?.crew || [], additional], {sort: true});
-}
-
-function getMonkeyLeadNames(additional = []){
-  return normalizeNameList([state.staff?.monkeyLeads || [], additional], {sort: true});
+function getLeadNames(additional = []){
+  return normalizeNameList([state.staff?.leads || [], additional], {sort: true});
 }
 
 function renderCrewOptions(selected = []){
@@ -4384,9 +4803,9 @@ function renderCrewOptions(selected = []){
     return;
   }
   const selectedList = normalizeNameList(selected);
-  const crewNames = getCrewNames([selectedList]);
+  const crewNames = getStagecrewNames([selectedList]);
   if(!crewNames.length){
-    showCrewSelect.innerHTML = '<option value="">Add crew in settings</option>';
+    showCrewSelect.innerHTML = '<option value="">Add stagecrew via admin settings</option>';
     showCrewSelect.disabled = true;
     return;
   }
@@ -4400,28 +4819,28 @@ function renderCrewOptions(selected = []){
 
 function renderPilotAssignments(show){
   if(leadPilotSelect){
-    const pilotNames = getPilotNames([show?.leadPilot]);
-    if(!pilotNames.length){
-      leadPilotSelect.innerHTML = '<option value="">Add pilots in settings</option>';
+    const leadNames = getLeadNames([show?.leadPilot]);
+    if(!leadNames.length){
+      leadPilotSelect.innerHTML = '<option value="">Add leads via admin settings</option>';
       leadPilotSelect.disabled = true;
     }else{
-      const pilotOptions = [''].concat(pilotNames).map(name=>{
+      const leadOptions = [''].concat(leadNames).map(name=>{
         if(!name){
           return '<option value="">Select</option>';
         }
         return `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
       }).join('');
-      leadPilotSelect.innerHTML = pilotOptions;
+      leadPilotSelect.innerHTML = leadOptions;
       leadPilotSelect.disabled = false;
       const leadValue = show?.leadPilot || '';
-      const leadMatch = pilotNames.find(name => name.toLowerCase() === leadValue.toLowerCase());
+      const leadMatch = leadNames.find(name => name.toLowerCase() === leadValue.toLowerCase());
       leadPilotSelect.value = leadMatch || '';
     }
   }
   if(monkeyLeadSelect){
-    const monkeyNames = getMonkeyLeadNames([show?.monkeyLead]);
+    const monkeyNames = getStagecrewNames([show?.monkeyLead]);
     if(!monkeyNames.length){
-      monkeyLeadSelect.innerHTML = '<option value="">Add monkey leads in settings</option>';
+      monkeyLeadSelect.innerHTML = '<option value="">Add stagecrew via admin settings</option>';
       monkeyLeadSelect.disabled = true;
     }else{
       const monkeyOptions = [''].concat(monkeyNames).map(name=>{

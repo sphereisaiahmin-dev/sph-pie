@@ -7,7 +7,40 @@
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <div id="appShell" class="app-shell">
+  <div id="loginScreen" class="auth-view">
+    <div class="auth-card">
+      <img src="./assets/Sphere%20Logo_RGB%20_White.png" alt="Sphere" class="auth-logo" />
+      <h1>Sign in to Monkey Tracker</h1>
+      <p class="help">Use your Sphere email address to continue.</p>
+      <form id="loginForm" class="auth-form">
+        <label for="loginEmail">Email</label>
+        <input id="loginEmail" type="email" autocomplete="username" required />
+        <label for="loginPassword">Password</label>
+        <input id="loginPassword" type="password" autocomplete="current-password" required />
+        <button type="submit" class="btn primary full">Sign in</button>
+        <div id="loginError" class="error" role="alert" hidden></div>
+      </form>
+    </div>
+  </div>
+  <div id="passwordResetScreen" class="auth-view" hidden>
+    <div class="auth-card">
+      <img src="./assets/Sphere%20Logo_RGB%20_White.png" alt="Sphere" class="auth-logo" />
+      <h1>Create a new password</h1>
+      <p class="help">Your temporary password has expired. Set a permanent password that meets the strength rules.</p>
+      <form id="passwordResetForm" class="auth-form">
+        <label for="resetCurrent">Current password</label>
+        <input id="resetCurrent" type="password" autocomplete="current-password" required />
+        <label for="resetNew">New password</label>
+        <input id="resetNew" type="password" autocomplete="new-password" required />
+        <label for="resetConfirm">Confirm new password</label>
+        <input id="resetConfirm" type="password" autocomplete="new-password" required />
+        <button type="submit" class="btn primary full">Update password</button>
+        <button type="button" id="passwordResetLogout" class="btn ghost full">Log out</button>
+        <div id="passwordResetError" class="error" role="alert" hidden></div>
+      </form>
+    </div>
+  </div>
+  <div id="appShell" class="app-shell" hidden>
     <aside id="configPanel" class="config" role="dialog" aria-modal="true" aria-labelledby="configTitle" aria-hidden="true">
       <div class="toolbar config-header">
         <h2 id="configTitle">Workspace menu</h2>
@@ -15,31 +48,39 @@
       <nav class="config-nav" aria-label="Settings categories">
         <button type="button" class="config-nav-btn is-active" data-config-target="admin">Admin settings</button>
       </nav>
-      <div id="adminPinPrompt" class="pin-prompt" role="alertdialog" aria-modal="true" aria-labelledby="adminPinTitle" hidden>
-        <div class="pin-card">
-          <h3 id="adminPinTitle">Admin PIN required</h3>
-          <p class="help">Enter the 4-digit PIN to continue.</p>
-          <label for="adminPinInput">PIN</label>
-          <input id="adminPinInput" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" />
-          <div class="row pin-actions">
-            <button type="button" id="adminPinCancel" class="btn ghost">Cancel</button>
-            <button type="button" id="adminPinSubmit" class="btn primary">Unlock</button>
-          </div>
-          <div id="adminPinError" class="error" role="alert" hidden>Incorrect PIN. Try again.</div>
-        </div>
-      </div>
       <form id="configForm" class="config-form">
         <section class="config-section grid is-active" data-config-section="admin">
-          <fieldset id="staffFields" class="col-12 provider-fields">
-            <legend>Pilots, monkey leads &amp; crew</legend>
-            <p class="help">Add one name per line. These lists feed the Lead and Pilot workspaces.</p>
-            <label for="pilotList">Pilots</label>
-            <textarea id="pilotList" class="list-input" placeholder="e.g., Alex"></textarea>
-            <label for="monkeyLeadList">Monkey leads</label>
-            <textarea id="monkeyLeadList" class="list-input" placeholder="e.g., Cleo"></textarea>
-            <label for="crewList">Crew</label>
-            <textarea id="crewList" class="list-input" placeholder="e.g., Jamie"></textarea>
-          </fieldset>
+          <div class="col-12 admin-users-panel">
+            <h3 id="userAccountsTitle">User accounts</h3>
+            <p class="help">Admins manage the roster here. Workspace lists automatically sync to assigned roles.</p>
+            <div id="userDirectory" class="user-directory" aria-live="polite"></div>
+            <div id="userForm" class="user-form" role="form" aria-labelledby="userAccountsTitle">
+              <input type="hidden" id="userId" />
+              <div class="grid">
+                <div class="col-6">
+                  <label for="userName">Name</label>
+                  <input id="userName" type="text" required />
+                </div>
+                <div class="col-6">
+                  <label for="userEmail">Email</label>
+                  <input id="userEmail" type="email" required />
+                </div>
+                <fieldset class="col-12 role-checkboxes">
+                  <legend>Roles</legend>
+                  <label><input type="checkbox" value="lead" name="userRole" /> Lead</label>
+                  <label><input type="checkbox" value="operator" name="userRole" /> Operator</label>
+                  <label><input type="checkbox" value="stagecrew" name="userRole" /> Stagecrew</label>
+                  <label><input type="checkbox" value="admin" name="userRole" /> Admin</label>
+                </fieldset>
+              </div>
+              <div class="row form-actions">
+                <button type="button" id="userFormCancel" class="btn ghost">Cancel</button>
+                <button type="button" id="userFormSubmit" class="btn primary">Save user</button>
+              </div>
+              <p class="help small">New accounts receive the temporary password <code>adminsphere1</code> and must update it on first login.</p>
+              <div id="userFormStatus" class="help" role="status"></div>
+            </div>
+          </div>
           <div class="col-12">
             <label for="unitLabelSelect">Unit label</label>
             <select id="unitLabelSelect" name="unitLabel">
@@ -89,6 +130,13 @@
           </button>
           <div class="topbar-actions">
             <button id="roleHome" class="btn ghost" type="button">← Choose workspace</button>
+            <div id="sessionUser" class="session-user" hidden>
+              <div class="session-user-text">
+                <strong id="sessionName"></strong>
+                <span id="sessionRoles"></span>
+              </div>
+              <button id="logoutBtn" class="btn ghost small" type="button">Logout</button>
+            </div>
           </div>
           <img src="./assets/Sphere%20Logo_RGB%20_White.png" alt="Sphere" class="app-logo" />
           <div class="topbar-title">
@@ -108,13 +156,13 @@
       <div class="role-options">
         <div class="role-options-main">
           <button id="chooseLead" type="button" class="btn primary role-btn">Lead</button>
-          <button id="choosePilot" type="button" class="btn primary role-btn">Pilot</button>
+          <button id="chooseOperator" type="button" class="btn primary role-btn">Operator</button>
         </div>
         <div class="role-options-archive">
           <button id="chooseArchive" type="button" class="btn primary role-btn">Archive</button>
         </div>
       </div>
-      <p class="help">Lead sets up shows and manages exports. Pilot logs entries against those shows.</p>
+      <p class="help">Lead sets up shows and manages exports. Operator logs entries against those shows.</p>
     </section>
 
     <section id="archiveView" class="panel view-archive-only" aria-labelledby="archiveTitle">
@@ -211,7 +259,7 @@
           <input id="showLabel" type="text" placeholder="e.g., 7pm Main" required />
         </div>
         <div class="col-6">
-          <label for="leadPilot">Lead Pilot</label>
+          <label for="leadPilot">Lead</label>
           <select id="leadPilot" required></select>
         </div>
         <div class="col-6">
@@ -225,13 +273,13 @@
       </div>
     </section>
 
-    <section class="panel view-pilot-only" aria-labelledby="entryTitle">
+    <section class="panel view-operator-only" aria-labelledby="entryTitle">
       <h2 id="entryTitle">Entry form</h2>
       <div class="grid" id="entryForm">
         <div class="col-12">
           <label for="entryShowSelect">Assign to show</label>
           <select id="entryShowSelect"></select>
-          <div id="pilotShowSummary" class="help">Select a show to start logging entries.</div>
+          <div id="operatorShowSummary" class="help">Select a show to start logging entries.</div>
         </div>
         <div class="col-2">
           <label for="unitId"><span id="unitLabel">Monkey</span> ID</label>

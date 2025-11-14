@@ -8,6 +8,7 @@ const ARCHIVE_RETENTION_MONTHS = 2;
 const DEFAULT_PILOTS = ['Alex','Nick','John Henery','James','Robert','Nazar'];
 const DEFAULT_CREW = ['Alex','Nick','John Henery','James','Robert','Nazar'];
 const DEFAULT_MONKEY_LEADS = ['Cleo','Bret','Leslie','Dallas'];
+const CALENDAR_STATE_KEY = 'default';
 
 const IDENTIFIER_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -62,10 +63,11 @@ class PostgresProvider {
     };
   }
 
-  async listShows(){
+  async listShows(filters = {}){
     await this._refreshArchive();
     const rows = await this._select(`SELECT data FROM ${this._table('shows')} ORDER BY updated_at DESC`);
-    return rows.map(row => this._normalizeShow(this._parseRowData(row?.data) || {}));
+    const shows = rows.map(row => this._normalizeShow(this._parseRowData(row?.data) || {})).filter(Boolean);
+    return this._filterShowsByDiscipline(shows, filters?.disciplineId);
   }
 
   async getShow(id){
@@ -74,7 +76,10 @@ class PostgresProvider {
     }
     await this._refreshArchive();
     const row = await this._selectOne(`SELECT data FROM ${this._table('shows')} WHERE id = $1`, [id]);
-    return row ? this._normalizeShow(this._parseRowData(row.data) || {}) : null;
+    if(!row){
+      return null;
+    }
+    return this._normalizeShow(this._parseRowData(row.data) || {});
   }
 
   async createShow(input){
@@ -223,10 +228,11 @@ class PostgresProvider {
     return normalized;
   }
 
-  async listArchivedShows(){
+  async listArchivedShows(filters = {}){
     await this._refreshArchive();
     const rows = await this._select(`SELECT data, archived_at, created_at, deleted_at FROM ${this._table('show_archive')} ORDER BY archived_at DESC, id ASC`);
-    return rows.map(row => this._mapArchiveRow(row)).filter(Boolean);
+    const shows = rows.map(row => this._mapArchiveRow(row)).filter(Boolean);
+    return this._filterShowsByDiscipline(shows, filters?.disciplineId);
   }
 
   async getArchivedShow(id){
@@ -285,6 +291,45 @@ class PostgresProvider {
     return {crew, pilots, monkeyLeads};
   }
 
+  async listCalendarEvents(filters = {}){
+    const rows = await this._select(`SELECT data FROM ${this._table('calendar_events')} ORDER BY start_ts ASC NULLS LAST, id ASC`);
+    const events = rows.map(row => this._mapCalendarEventRow(row)).filter(Boolean);
+    const filtered = this._filterCalendarEvents(events, filters);
+    const state = await this._getCalendarState();
+    return {events: filtered, syncedAt: state.syncedAt};
+  }
+
+  async replaceCalendarEvents(events = [], syncedAt = Date.now()){
+    const normalized = Array.isArray(events)
+      ? events.map(event => this._normalizeCalendarEvent(event)).filter(Boolean)
+      : [];
+    const table = this._table('calendar_events');
+    await this._withClient(async client =>{
+      await client.query(`DELETE FROM ${table}`);
+      for(const event of normalized){
+        await client.query(`
+          INSERT INTO ${table} (id, data, start_ts, end_ts, discipline_id)
+          VALUES ($1, $2::jsonb, $3, $4, $5)
+          ON CONFLICT(id) DO UPDATE SET data = EXCLUDED.data, start_ts = EXCLUDED.start_ts, end_ts = EXCLUDED.end_ts, discipline_id = EXCLUDED.discipline_id
+        `, [
+          event.id,
+          JSON.stringify(event),
+          this._toDate(event.startTs),
+          this._toDate(event.endTs),
+          this._normalizeDisciplineId(event.disciplineId)
+        ]);
+      }
+      const effectiveSyncedAt = Number.isFinite(syncedAt) ? syncedAt : Date.now();
+      await client.query(`
+        INSERT INTO ${this._table('calendar_state')} (id, data)
+        VALUES ($1, $2::jsonb)
+        ON CONFLICT(id) DO UPDATE SET data = EXCLUDED.data
+      `, [CALENDAR_STATE_KEY, JSON.stringify({syncedAt: effectiveSyncedAt})]);
+    });
+    const effectiveSyncedAt = Number.isFinite(syncedAt) ? syncedAt : Date.now();
+    return {events: normalized, syncedAt: effectiveSyncedAt};
+  }
+
   _assertRequiredShowFields(raw = {}){
     const required = [
       {key: 'date', label: 'Date'},
@@ -316,6 +361,7 @@ class PostgresProvider {
       monkeyLead: typeof raw.monkeyLead === 'string' ? raw.monkeyLead.trim() : '',
       notes: typeof raw.notes === 'string' ? raw.notes.trim() : '',
       entries: Array.isArray(raw.entries) ? raw.entries.map(e => this._normalizeEntry(e)) : [],
+      disciplineId: this._normalizeDisciplineId(raw.disciplineId),
       createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
       updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now()
     };
@@ -399,6 +445,8 @@ class PostgresProvider {
     const staffTable = this._table('staff');
     const monkeyTable = this._table('monkey_leads');
     const archiveTable = this._table('show_archive');
+    const calendarEventsTable = this._table('calendar_events');
+    const calendarStateTable = this._table('calendar_state');
     await this._run(`
       CREATE TABLE IF NOT EXISTS ${showsTable} (
         id UUID PRIMARY KEY,
@@ -433,6 +481,22 @@ class PostgresProvider {
     `);
     await this._run(`CREATE INDEX IF NOT EXISTS ${this._indexName('show_archive_archived_at_idx')} ON ${archiveTable} (archived_at DESC)`);
     await this._run(`CREATE INDEX IF NOT EXISTS ${this._indexName('staff_role_name_idx')} ON ${staffTable} (role, name)`);
+    await this._run(`
+      CREATE TABLE IF NOT EXISTS ${calendarEventsTable} (
+        id TEXT PRIMARY KEY,
+        data JSONB NOT NULL,
+        start_ts TIMESTAMPTZ,
+        end_ts TIMESTAMPTZ,
+        discipline_id TEXT
+      )
+    `);
+    await this._run(`CREATE INDEX IF NOT EXISTS ${this._indexName('calendar_events_start_idx')} ON ${calendarEventsTable} (start_ts)`);
+    await this._run(`
+      CREATE TABLE IF NOT EXISTS ${calendarStateTable} (
+        id TEXT PRIMARY KEY,
+        data JSONB NOT NULL
+      )
+    `);
   }
 
   async _seedDefaultStaff(){
@@ -702,6 +766,7 @@ class PostgresProvider {
     if(!Array.isArray(show.crew)){
       show.crew = [];
     }
+    show.disciplineId = this._normalizeDisciplineId(show.disciplineId);
     return show;
   }
 
@@ -716,6 +781,152 @@ class PostgresProvider {
       trimmed.sort((a, b) => a.localeCompare(b));
     }
     return Array.from(new Set(trimmed));
+  }
+
+  _normalizeText(value){
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  _normalizeDisciplineId(value){
+    if(typeof value !== 'string'){
+      return null;
+    }
+    const normalized = value.trim().toLowerCase();
+    return normalized || null;
+  }
+
+  _normalizeCalendarAttachments(raw){
+    if(!raw){
+      return [];
+    }
+    const list = Array.isArray(raw) ? raw : [raw];
+    const attachments = [];
+    list.forEach(item => {
+      if(!item){
+        return;
+      }
+      if(typeof item === 'string'){
+        const url = this._normalizeText(item);
+        if(url){
+          attachments.push({url});
+        }
+        return;
+      }
+      if(typeof item === 'object'){
+        const url = this._normalizeText(item.url || item.val || '');
+        if(!url){
+          return;
+        }
+        const attachment = {url};
+        const params = item.params || {};
+        const mimeType = this._normalizeText(params.FMTTYPE || params['FMTTYPE'] || params['X-FMTTYPE'] || '');
+        if(mimeType){
+          attachment.mimeType = mimeType;
+        }
+        const label = this._normalizeText(params.LABEL || params['X-LABEL'] || '');
+        if(label){
+          attachment.label = label;
+        }
+        attachments.push(attachment);
+      }
+    });
+    return attachments;
+  }
+
+  _normalizeCalendarEvent(raw = {}){
+    if(!raw || typeof raw !== 'object'){
+      return null;
+    }
+    const id = this._normalizeText(raw.id || raw.uid);
+    if(!id){
+      return null;
+    }
+    const startTs = this._getTimestamp(raw.startTs ?? raw.start);
+    const endTs = this._getTimestamp(raw.endTs ?? raw.end);
+    const startIso = Number.isFinite(startTs) ? new Date(startTs).toISOString() : (typeof raw.start === 'string' ? raw.start : null);
+    const endIso = Number.isFinite(endTs) ? new Date(endTs).toISOString() : (typeof raw.end === 'string' ? raw.end : null);
+    const urlValue = typeof raw.url === 'string'
+      ? raw.url
+      : (raw.url && typeof raw.url.val === 'string' ? raw.url.val : '');
+    const disciplineId = this._normalizeDisciplineId(raw.disciplineId);
+    const categories = Array.isArray(raw.categories) ? raw.categories : [];
+    const category = categories.length ? this._normalizeText(categories[0]) : this._normalizeText(raw.category || '');
+    const who = this._normalizeText(raw.who || raw['TEAMUP-WHO'] || '');
+    const allDay = Boolean(
+      raw.allDay
+      || raw.start?.dateOnly
+      || raw.datetype === 'date'
+      || String(raw['MICROSOFT-CDO-ALLDAYEVENT']).toUpperCase() === 'TRUE'
+    );
+    const createdAt = this._getTimestamp(raw.createdAt ?? raw.created);
+    const updatedAt = this._getTimestamp(raw.updatedAt ?? raw.lastModified ?? raw.lastmodified ?? raw.dtstamp);
+    return {
+      id,
+      uid: id,
+      title: this._normalizeText(raw.title || raw.summary || '') || 'Untitled event',
+      description: this._normalizeText(raw.description || ''),
+      location: this._normalizeText(raw.location || ''),
+      url: this._normalizeText(urlValue || ''),
+      start: startIso,
+      end: endIso,
+      startTs: Number.isFinite(startTs) ? startTs : null,
+      endTs: Number.isFinite(endTs) ? endTs : null,
+      allDay,
+      disciplineId,
+      category,
+      who,
+      attachments: this._normalizeCalendarAttachments(raw.attachments || raw.attach),
+      createdAt: Number.isFinite(createdAt) ? createdAt : null,
+      updatedAt: Number.isFinite(updatedAt) ? updatedAt : null
+    };
+  }
+
+  _mapCalendarEventRow(row){
+    if(!row || (!row.data && row.data !== {})){
+      return null;
+    }
+    const parsed = this._parseRowData(row.data);
+    return this._normalizeCalendarEvent(parsed || {});
+  }
+
+  _filterShowsByDiscipline(list, disciplineId){
+    const normalized = this._normalizeDisciplineId(disciplineId);
+    if(!normalized){
+      return Array.isArray(list) ? list : [];
+    }
+    return (Array.isArray(list) ? list : []).filter(item => this._normalizeDisciplineId(item?.disciplineId) === normalized);
+  }
+
+  _filterCalendarEvents(events = [], filters = {}){
+    const normalizedDiscipline = this._normalizeDisciplineId(filters?.disciplineId);
+    const query = typeof filters?.query === 'string' ? filters.query.trim().toLowerCase() : '';
+    if(!normalizedDiscipline && !query){
+      return Array.isArray(events) ? events : [];
+    }
+    return (Array.isArray(events) ? events : []).filter(event => {
+      if(normalizedDiscipline && this._normalizeDisciplineId(event?.disciplineId) !== normalizedDiscipline){
+        return false;
+      }
+      if(query){
+        const haystack = [event?.title, event?.description, event?.location, event?.who]
+          .map(value => (typeof value === 'string' ? value.toLowerCase() : ''))
+          .join(' ');
+        if(!haystack.includes(query)){
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  async _getCalendarState(){
+    const row = await this._selectOne(`SELECT data FROM ${this._table('calendar_state')} WHERE id = $1`, [CALENDAR_STATE_KEY]);
+    if(!row || !row.data){
+      return {syncedAt: null};
+    }
+    const parsed = this._parseRowData(row.data);
+    const syncedAt = this._getTimestamp(parsed?.syncedAt);
+    return {syncedAt: Number.isFinite(syncedAt) ? syncedAt : null};
   }
 
   _parseRowData(value){

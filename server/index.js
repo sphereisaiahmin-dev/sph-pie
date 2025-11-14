@@ -4,6 +4,7 @@ const morgan = require('morgan');
 const { loadConfig, saveConfig } = require('./configStore');
 const { initProvider, getProvider } = require('./storage');
 const { setWebhookConfig, getWebhookStatus, dispatchShowEvent } = require('./webhookDispatcher');
+const { fetchCalendarEvents } = require('./calendarFeed');
 const {
   initUserStore,
   listUsers,
@@ -276,16 +277,26 @@ async function bootstrap(){
     res.status(410).json({error: 'Manual staff editing disabled. Manage users instead.'});
   });
 
+  function normalizeDisciplineParam(value){
+    if(typeof value !== 'string'){
+      return null;
+    }
+    const trimmed = value.trim().toLowerCase();
+    return trimmed || null;
+  }
+
   app.get('/api/shows', requireRoles(...DRONE_READ_ROLES), asyncHandler(async (req, res)=>{
     const provider = getProvider();
-    const shows = await provider.listShows();
+    const disciplineId = normalizeDisciplineParam(req.query?.discipline);
+    const shows = await provider.listShows({disciplineId});
     const storageMeta = getStorageMetadata();
     res.json({storage: storageMeta.label, storageMeta, webhook: getWebhookStatus(), shows});
   }));
 
   app.get('/api/shows/archive', requireRoles(...DRONE_READ_ROLES), asyncHandler(async (req, res)=>{
     const provider = getProvider();
-    const shows = await provider.listArchivedShows();
+    const disciplineId = normalizeDisciplineParam(req.query?.discipline);
+    const shows = await provider.listArchivedShows({disciplineId});
     res.json({shows});
   }));
 
@@ -335,6 +346,21 @@ async function bootstrap(){
     }
     await dispatchShowEvent('show.archived', archived);
     res.json(archived);
+  }));
+
+  app.get('/api/calendar/events', requireRoles(...DRONE_READ_ROLES), asyncHandler(async (req, res)=>{
+    const provider = getProvider();
+    const disciplineId = normalizeDisciplineParam(req.query?.discipline);
+    const query = typeof req.query?.q === 'string' ? req.query.q.trim() : '';
+    const {events, syncedAt} = await provider.listCalendarEvents({disciplineId, query});
+    res.json({events, syncedAt});
+  }));
+
+  app.post('/api/calendar/sync', requireRoles(...DRONE_READ_ROLES), asyncHandler(async (req, res)=>{
+    const provider = getProvider();
+    const feedEvents = await fetchCalendarEvents();
+    const {events, syncedAt} = await provider.replaceCalendarEvents(feedEvents);
+    res.json({events, syncedAt});
   }));
 
   app.post('/api/webhook/simulate-month', requireRoles('admin'), asyncHandler(async (req, res)=>{

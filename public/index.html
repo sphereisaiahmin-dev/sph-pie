@@ -108,6 +108,10 @@
       <h2 id="disciplineTitle">Choose discipline</h2>
       <p class="lead">Select the production discipline you want to manage.</p>
       <div id="disciplineList" class="discipline-options" role="list"></div>
+      <div class="discipline-actions" role="group" aria-label="Quick access">
+        <button id="chooseCalendar" type="button" class="btn ghost discipline-action-btn">View calendar</button>
+        <button id="chooseArchive" type="button" class="btn ghost discipline-action-btn">Open archive</button>
+      </div>
     </section>
 
     <section id="workspaceView" class="panel landing-panel view-workspace-only" aria-labelledby="workspaceTitle">
@@ -124,11 +128,34 @@
           <button id="chooseLead" type="button" class="btn primary role-btn">Lead</button>
           <button id="chooseOperator" type="button" class="btn primary role-btn">Operator</button>
         </div>
-        <div class="role-options-archive">
-          <button id="chooseArchive" type="button" class="btn primary role-btn">Archive</button>
-        </div>
       </div>
       <p class="help">Lead sets up shows and manages exports. Operator logs entries against those shows.</p>
+    </section>
+
+    <section id="calendarView" class="panel view-calendar-only" aria-labelledby="calendarTitle">
+      <div class="panel-header">
+        <h2 id="calendarTitle">Production calendar</h2>
+        <div class="panel-actions calendar-panel-actions">
+          <span id="calendarUpdatedAt" class="help"></span>
+          <button id="refreshCalendar" type="button" class="btn ghost">Refresh calendar</button>
+        </div>
+      </div>
+      <div class="calendar-controls" role="group" aria-label="Calendar filters">
+        <div class="control-group control-group-inline">
+          <label for="calendarDisciplineFilter">Discipline</label>
+          <select id="calendarDisciplineFilter">
+            <option value="">All disciplines</option>
+          </select>
+        </div>
+        <div class="control-group control-group-inline">
+          <label for="calendarSearch">Search</label>
+          <input id="calendarSearch" type="search" placeholder="Search events" />
+        </div>
+      </div>
+      <div id="calendarContent" class="calendar-content">
+        <div id="calendarEmpty" class="help">Calendar events will appear after syncing the feed.</div>
+        <div id="calendarEventList" class="calendar-event-list"></div>
+      </div>
     </section>
 
     <section id="adminView" class="panel view-admin-only" aria-labelledby="adminTitle">
@@ -245,12 +272,18 @@
           <div id="archiveModeControls" class="control-group"></div>
         </div>
         <div class="archive-chart-wrap">
-          <div class="archive-chart-panel">
-            <div class="archive-chart-filter control-group control-group-inline">
-              <label for="archiveOperatorFilter">Operator</label>
-              <select id="archiveOperatorFilter">
-                <option value="">All operators</option>
-              </select>
+        <div class="archive-chart-panel">
+          <div class="archive-chart-filter control-group control-group-inline">
+            <label for="archiveDisciplineFilter">Discipline</label>
+            <select id="archiveDisciplineFilter">
+              <option value="">All disciplines</option>
+            </select>
+          </div>
+          <div class="archive-chart-filter control-group control-group-inline">
+            <label for="archiveOperatorFilter">Operator</label>
+            <select id="archiveOperatorFilter">
+              <option value="">All operators</option>
+            </select>
             </div>
             <canvas id="archiveStatCanvas" class="archive-chart" role="img" aria-label="Archived show statistic over time"></canvas>
           </div>

@@ -10,6 +10,7 @@ const ARCHIVE_RETENTION_MONTHS = 2;
 const DEFAULT_PILOTS = ['Alex','Nick','John Henery','James','Robert','Nazar'];
 const DEFAULT_CREW = ['Alex','Nick','John Henery','James','Robert','Nazar'];
 const DEFAULT_MONKEY_LEADS = ['Cleo','Bret','Leslie','Dallas'];
+const CALENDAR_STATE_KEY = 'default';
 
 class SqlProvider {
   constructor(config = {}){
@@ -74,16 +75,30 @@ class SqlProvider {
     };
   }
 
-  async listShows(){
+  async listShows(filters = {}){
     await this._refreshArchive();
     const rows = this._select('SELECT data FROM shows ORDER BY updated_at DESC');
-    return rows.map(r => JSON.parse(r.data));
+    const shows = rows.map(row => {
+      try{
+        return this._normalizeShow(JSON.parse(row.data));
+      }catch(err){
+        return null;
+      }
+    }).filter(Boolean);
+    return this._filterShowsByDiscipline(shows, filters?.disciplineId);
   }
 
   async getShow(id){
     await this._refreshArchive();
     const row = this._selectOne('SELECT data FROM shows WHERE id = ?', [id]);
-    return row ? JSON.parse(row.data) : null;
+    if(!row){
+      return null;
+    }
+    try{
+      return this._normalizeShow(JSON.parse(row.data));
+    }catch(err){
+      return null;
+    }
   }
 
   async createShow(input){
@@ -223,10 +238,11 @@ class SqlProvider {
     return normalized;
   }
 
-  async listArchivedShows(){
+  async listArchivedShows(filters = {}){
     await this._refreshArchive();
     const rows = this._select('SELECT data, archived_at, created_at FROM show_archive ORDER BY archived_at DESC, id ASC');
-    return rows.map(row => this._mapArchiveRow(row)).filter(Boolean);
+    const shows = rows.map(row => this._mapArchiveRow(row)).filter(Boolean);
+    return this._filterShowsByDiscipline(shows, filters?.disciplineId);
   }
 
   async getArchivedShow(id){
@@ -286,6 +302,42 @@ class SqlProvider {
     return {crew, pilots, monkeyLeads};
   }
 
+  async listCalendarEvents(filters = {}){
+    const rows = this._select('SELECT data FROM calendar_events ORDER BY start_ts ASC, id ASC');
+    const events = rows.map(row => this._mapCalendarEventRow(row)).filter(Boolean);
+    const filtered = this._filterCalendarEvents(events, filters);
+    const state = this._getCalendarState();
+    return {events: filtered, syncedAt: state.syncedAt};
+  }
+
+  async replaceCalendarEvents(events = [], syncedAt = Date.now()){
+    const normalized = Array.isArray(events)
+      ? events.map(event => this._normalizeCalendarEvent(event)).filter(Boolean)
+      : [];
+    this._run('DELETE FROM calendar_events');
+    normalized.forEach(event => {
+      this._run(`
+        INSERT INTO calendar_events (id, data, start_ts, end_ts, discipline_id)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET data = excluded.data, start_ts = excluded.start_ts, end_ts = excluded.end_ts, discipline_id = excluded.discipline_id
+      `, [
+        event.id,
+        JSON.stringify(event),
+        this._stringifyTimestamp(event.startTs),
+        this._stringifyTimestamp(event.endTs),
+        this._normalizeDisciplineId(event.disciplineId)
+      ]);
+    });
+    const effectiveSyncedAt = Number.isFinite(syncedAt) ? syncedAt : Date.now();
+    this._run(`
+      INSERT INTO calendar_state (id, data)
+      VALUES (?, ?)
+      ON CONFLICT(id) DO UPDATE SET data = excluded.data
+    `, [CALENDAR_STATE_KEY, JSON.stringify({syncedAt: effectiveSyncedAt})]);
+    await this._persistDatabase();
+    return {events: normalized, syncedAt: effectiveSyncedAt};
+  }
+
   _assertRequiredShowFields(raw = {}){
     const required = [
       {key: 'date', label: 'Date'},
@@ -317,6 +369,7 @@ class SqlProvider {
       monkeyLead: typeof raw.monkeyLead === 'string' ? raw.monkeyLead.trim() : '',
       notes: typeof raw.notes === 'string' ? raw.notes.trim() : '',
       entries: Array.isArray(raw.entries) ? raw.entries.map(e => this._normalizeEntry(e)) : [],
+      disciplineId: this._normalizeDisciplineId(raw.disciplineId),
       createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
       updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now()
     };
@@ -485,6 +538,58 @@ class SqlProvider {
       }
     }
 
+    if(!this._tableExists('calendar_events')){
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS calendar_events (
+          id TEXT PRIMARY KEY,
+          data TEXT NOT NULL,
+          start_ts TEXT,
+          end_ts TEXT,
+          discipline_id TEXT
+        )
+      `);
+      mutated = true;
+    }else{
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS calendar_events (
+          id TEXT PRIMARY KEY,
+          data TEXT NOT NULL,
+          start_ts TEXT,
+          end_ts TEXT,
+          discipline_id TEXT
+        )
+      `);
+      if(!this._columnExists('calendar_events', 'start_ts')){
+        this.db.exec('ALTER TABLE calendar_events ADD COLUMN start_ts TEXT');
+        mutated = true;
+      }
+      if(!this._columnExists('calendar_events', 'end_ts')){
+        this.db.exec('ALTER TABLE calendar_events ADD COLUMN end_ts TEXT');
+        mutated = true;
+      }
+      if(!this._columnExists('calendar_events', 'discipline_id')){
+        this.db.exec('ALTER TABLE calendar_events ADD COLUMN discipline_id TEXT');
+        mutated = true;
+      }
+    }
+
+    if(!this._tableExists('calendar_state')){
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS calendar_state (
+          id TEXT PRIMARY KEY,
+          data TEXT NOT NULL
+        )
+      `);
+      mutated = true;
+    }else{
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS calendar_state (
+          id TEXT PRIMARY KEY,
+          data TEXT NOT NULL
+        )
+      `);
+    }
+
     return mutated;
   }
 
@@ -557,6 +662,160 @@ class SqlProvider {
       result.sort((a,b)=> a.localeCompare(b, undefined, {sensitivity: 'base'}));
     }
     return result;
+  }
+
+  _normalizeText(value){
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  _normalizeDisciplineId(value){
+    if(typeof value !== 'string'){
+      return null;
+    }
+    const normalized = value.trim().toLowerCase();
+    return normalized || null;
+  }
+
+  _normalizeCalendarAttachments(raw){
+    if(!raw){
+      return [];
+    }
+    const list = Array.isArray(raw) ? raw : [raw];
+    const attachments = [];
+    list.forEach(item => {
+      if(!item){
+        return;
+      }
+      if(typeof item === 'string'){
+        const url = this._normalizeText(item);
+        if(url){
+          attachments.push({url});
+        }
+        return;
+      }
+      if(typeof item === 'object'){
+        const url = this._normalizeText(item.url || item.val || '');
+        if(!url){
+          return;
+        }
+        const attachment = {url};
+        const params = item.params || {};
+        const mimeType = this._normalizeText(params.FMTTYPE || params['FMTTYPE'] || params['X-FMTTYPE'] || '');
+        if(mimeType){
+          attachment.mimeType = mimeType;
+        }
+        const label = this._normalizeText(params.LABEL || params['X-LABEL'] || '');
+        if(label){
+          attachment.label = label;
+        }
+        attachments.push(attachment);
+      }
+    });
+    return attachments;
+  }
+
+  _normalizeCalendarEvent(raw = {}){
+    if(!raw || typeof raw !== 'object'){
+      return null;
+    }
+    const id = this._normalizeText(raw.id || raw.uid);
+    if(!id){
+      return null;
+    }
+    const startTs = this._getTimestamp(raw.startTs ?? raw.start);
+    const endTs = this._getTimestamp(raw.endTs ?? raw.end);
+    const startIso = Number.isFinite(startTs) ? new Date(startTs).toISOString() : (typeof raw.start === 'string' ? raw.start : null);
+    const endIso = Number.isFinite(endTs) ? new Date(endTs).toISOString() : (typeof raw.end === 'string' ? raw.end : null);
+    const urlValue = typeof raw.url === 'string'
+      ? raw.url
+      : (raw.url && typeof raw.url.val === 'string' ? raw.url.val : '');
+    const disciplineId = this._normalizeDisciplineId(raw.disciplineId);
+    const categories = Array.isArray(raw.categories) ? raw.categories : [];
+    const category = categories.length ? this._normalizeText(categories[0]) : this._normalizeText(raw.category || '');
+    const who = this._normalizeText(raw.who || raw['TEAMUP-WHO'] || '');
+    const allDay = Boolean(
+      raw.allDay
+      || raw.start?.dateOnly
+      || raw.datetype === 'date'
+      || String(raw['MICROSOFT-CDO-ALLDAYEVENT']).toUpperCase() === 'TRUE'
+    );
+    const createdAt = this._getTimestamp(raw.createdAt ?? raw.created);
+    const updatedAt = this._getTimestamp(raw.updatedAt ?? raw.lastModified ?? raw.lastmodified ?? raw.dtstamp);
+    return {
+      id,
+      uid: id,
+      title: this._normalizeText(raw.title || raw.summary || '') || 'Untitled event',
+      description: this._normalizeText(raw.description || ''),
+      location: this._normalizeText(raw.location || ''),
+      url: this._normalizeText(urlValue || ''),
+      start: startIso,
+      end: endIso,
+      startTs: Number.isFinite(startTs) ? startTs : null,
+      endTs: Number.isFinite(endTs) ? endTs : null,
+      allDay,
+      disciplineId,
+      category,
+      who,
+      attachments: this._normalizeCalendarAttachments(raw.attachments || raw.attach),
+      createdAt: Number.isFinite(createdAt) ? createdAt : null,
+      updatedAt: Number.isFinite(updatedAt) ? updatedAt : null
+    };
+  }
+
+  _mapCalendarEventRow(row){
+    if(!row || typeof row.data !== 'string'){
+      return null;
+    }
+    try{
+      const parsed = JSON.parse(row.data);
+      return this._normalizeCalendarEvent(parsed);
+    }catch(err){
+      return null;
+    }
+  }
+
+  _filterShowsByDiscipline(list, disciplineId){
+    const normalized = this._normalizeDisciplineId(disciplineId);
+    if(!normalized){
+      return Array.isArray(list) ? list : [];
+    }
+    return (Array.isArray(list) ? list : []).filter(item => this._normalizeDisciplineId(item?.disciplineId) === normalized);
+  }
+
+  _filterCalendarEvents(events = [], filters = {}){
+    const normalizedDiscipline = this._normalizeDisciplineId(filters?.disciplineId);
+    const query = typeof filters?.query === 'string' ? filters.query.trim().toLowerCase() : '';
+    if(!normalizedDiscipline && !query){
+      return Array.isArray(events) ? events : [];
+    }
+    return (Array.isArray(events) ? events : []).filter(event => {
+      if(normalizedDiscipline && this._normalizeDisciplineId(event?.disciplineId) !== normalizedDiscipline){
+        return false;
+      }
+      if(query){
+        const haystack = [event?.title, event?.description, event?.location, event?.who]
+          .map(value => (typeof value === 'string' ? value.toLowerCase() : ''))
+          .join(' ');
+        if(!haystack.includes(query)){
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  _getCalendarState(){
+    const row = this._selectOne('SELECT data FROM calendar_state WHERE id = ?', [CALENDAR_STATE_KEY]);
+    if(!row || typeof row.data !== 'string'){
+      return {syncedAt: null};
+    }
+    try{
+      const parsed = JSON.parse(row.data);
+      const syncedAt = this._getTimestamp(parsed?.syncedAt);
+      return {syncedAt: Number.isFinite(syncedAt) ? syncedAt : null};
+    }catch(err){
+      return {syncedAt: null};
+    }
   }
 
   _tableExists(name){
@@ -827,6 +1086,7 @@ class SqlProvider {
     if(!Array.isArray(show.crew)){
       show.crew = [];
     }
+    show.disciplineId = this._normalizeDisciplineId(show.disciplineId);
     return show;
   }
 

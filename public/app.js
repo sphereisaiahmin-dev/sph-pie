@@ -132,12 +132,20 @@ const state = {
   archiveChartFilters: {
     startDate: null,
     endDate: null,
-    operator: null
+    operator: null,
+    disciplineId: null
   },
   archiveSelectionMode: 'calendar',
   archiveDailyGroups: [],
   archiveDailyGroupsByKey: {},
   activeArchiveDayKey: null,
+  calendarEvents: [],
+  calendarFilters: {
+    disciplineId: null,
+    query: ''
+  },
+  calendarSyncedAt: null,
+  calendarLoading: false,
   webhookConfig: {
     enabled: false,
     url: '',
@@ -290,6 +298,7 @@ const webhookCancelBtn = el('webhookCancel');
 const roleHomeBtn = el('roleHome');
 const viewBadge = el('viewBadge');
 const welcomeBanner = el('welcomeBanner');
+const chooseCalendarBtn = el('chooseCalendar');
 const chooseLeadBtn = el('chooseLead');
 const chooseOperatorBtn = el('chooseOperator');
 const chooseArchiveBtn = el('chooseArchive');
@@ -305,6 +314,7 @@ const archiveStats = el('archiveStats');
 const archiveMetricButtons = el('archiveMetricButtons');
 const archiveIssueButtons = el('archiveIssueButtons');
 const archiveModeControls = el('archiveModeControls');
+const archiveDisciplineFilter = el('archiveDisciplineFilter');
 let archiveStatShowSelect = el('archiveStatShowSelect');
 let archiveShowFilterStart = el('archiveShowFilterStart');
 let archiveShowFilterEnd = el('archiveShowFilterEnd');
@@ -321,6 +331,12 @@ const archiveDayDetailContent = el('archiveDayDetailContent');
 let archiveDayDetailCloseTimer = null;
 const closeArchiveDayDetailBtn = el('closeArchiveDayDetail');
 const refreshArchiveBtn = el('refreshArchive');
+const calendarEventList = el('calendarEventList');
+const calendarEmpty = el('calendarEmpty');
+const calendarDisciplineFilter = el('calendarDisciplineFilter');
+const calendarSearchInput = el('calendarSearch');
+const calendarUpdatedAt = el('calendarUpdatedAt');
+const refreshCalendarBtn = el('refreshCalendar');
 const connectionStatusEl = el('connectionStatus');
 const providerBadge = el('providerBadge');
 const webhookBadge = el('webhookBadge');
@@ -615,6 +631,10 @@ function updateWorkspaceAvailability(){
     const allowed = hasWorkspaces && (userHasRole('lead') || userHasRole('operator') || userHasRole('crew'));
     chooseArchiveBtn.disabled = !allowed;
     chooseArchiveBtn.classList.toggle('is-disabled', !allowed);
+  }
+  if(chooseCalendarBtn){
+    chooseCalendarBtn.disabled = false;
+    chooseCalendarBtn.classList.remove('is-disabled');
   }
 }
 
@@ -1054,6 +1074,9 @@ function initUI(){
       setCurrentShow(entryShowSelect.value || null);
     });
   }
+  if(chooseCalendarBtn){
+    chooseCalendarBtn.addEventListener('click', ()=> openCalendarView());
+  }
   if(chooseLeadBtn){
     chooseLeadBtn.addEventListener('click', ()=>{
       if(!userHasRole('lead')){
@@ -1098,6 +1121,9 @@ function initUI(){
   }
   if(archiveIssueButtons){
     archiveIssueButtons.addEventListener('click', onArchiveMetricButtonsClick);
+  }
+  if(archiveDisciplineFilter){
+    archiveDisciplineFilter.addEventListener('change', onArchiveDisciplineFilterChange);
   }
   if(archiveModeCalendarBtn){
     archiveModeCalendarBtn.addEventListener('click', ()=> setArchiveSelectionMode('calendar'));
@@ -1235,6 +1261,16 @@ function initUI(){
     refreshArchiveBtn.dataset.label = refreshArchiveBtn.textContent;
     refreshArchiveBtn.addEventListener('click', onRefreshArchiveList);
   }
+  if(refreshCalendarBtn){
+    refreshCalendarBtn.dataset.label = refreshCalendarBtn.textContent;
+    refreshCalendarBtn.addEventListener('click', onRefreshCalendar);
+  }
+  if(calendarDisciplineFilter){
+    calendarDisciplineFilter.addEventListener('change', onCalendarDisciplineFilterChange);
+  }
+  if(calendarSearchInput){
+    calendarSearchInput.addEventListener('input', onCalendarSearchInput);
+  }
 
   document.addEventListener('click', event=>{
     if(!event.target.closest('.show-menu-wrap')){
@@ -1298,6 +1334,9 @@ async function loadDisciplineConfig(){
     updateActiveDisciplineUi();
     renderUserRoleGrid(selectedRoles);
     renderUserRoleFilterOptions();
+    renderArchiveDisciplineFilterOptions();
+    renderCalendarDisciplineOptions();
+    renderCalendar();
   }catch(err){
     console.error('Failed to load disciplines', err);
     if(!state.disciplines.length){
@@ -1312,6 +1351,9 @@ async function loadDisciplineConfig(){
     updateActiveDisciplineUi();
     renderUserRoleGrid(selectedRoles);
     renderUserRoleFilterOptions();
+    renderArchiveDisciplineFilterOptions();
+    renderCalendarDisciplineOptions();
+    renderCalendar();
   }
 }
 
@@ -1433,6 +1475,8 @@ function renderDisciplineOptions(){
     const label = escapeHtml(option.name || getDisciplineDisplayName(option.id));
     return `<button type="button" class="${classes.join(' ')}" data-discipline-id="${escapeHtml(option.id)}" aria-pressed="${isActive ? 'true' : 'false'}">${label}</button>`;
   }).join('');
+  renderArchiveDisciplineFilterOptions();
+  renderCalendarDisciplineOptions();
 }
 
 function onDisciplineListClick(event){
@@ -1447,19 +1491,46 @@ function onDisciplineListClick(event){
   selectDiscipline(id);
 }
 
-function selectDiscipline(disciplineId){
+async function selectDiscipline(disciplineId){
+  const previous = getActiveDisciplineId();
   const normalized = typeof disciplineId === 'string' ? disciplineId.trim().toLowerCase() : '';
   if(!normalized){
     return;
   }
   state.selectedDisciplineId = normalized;
+  const shouldSyncArchive = !state.archiveChartFilters || typeof state.archiveChartFilters !== 'object'
+    || !state.archiveChartFilters.disciplineId
+    || state.archiveChartFilters.disciplineId === previous;
+  const shouldSyncCalendar = !state.calendarFilters || typeof state.calendarFilters !== 'object'
+    || !state.calendarFilters.disciplineId
+    || state.calendarFilters.disciplineId === previous;
+  if(!state.archiveChartFilters || typeof state.archiveChartFilters !== 'object'){
+    state.archiveChartFilters = {startDate: null, endDate: null, operator: null, disciplineId: normalized};
+  }else if(shouldSyncArchive){
+    state.archiveChartFilters.disciplineId = normalized;
+  }
+  if(!state.calendarFilters || typeof state.calendarFilters !== 'object'){
+    state.calendarFilters = {disciplineId: normalized, query: ''};
+  }else if(shouldSyncCalendar){
+    state.calendarFilters.disciplineId = normalized;
+  }else if(state.calendarFilters.disciplineId){
+    state.calendarFilters.disciplineId = state.calendarFilters.disciplineId.trim().toLowerCase();
+  }
   applyActiveDisciplineRoster();
   renderDisciplineOptions();
   updateActiveDisciplineUi();
+  renderCalendar();
   if(disciplineHasForms(normalized)){
     setView('landing');
   }else{
     setView('workspace');
+  }
+  if(normalized !== previous || shouldSyncArchive || shouldSyncCalendar){
+    try{
+      await loadShows();
+    }catch(err){
+      console.error('Failed to load shows for discipline', err);
+    }
   }
 }
 
@@ -1541,7 +1612,13 @@ function renderUserRoleFilterOptions(){
 async function loadShows(){
   try{
     const previousId = state.currentShowId;
-    const data = await apiRequest('/api/shows');
+    const disciplineId = getActiveDisciplineId();
+    const params = new URLSearchParams();
+    if(disciplineId){
+      params.set('discipline', disciplineId);
+    }
+    const endpoint = params.toString() ? `/api/shows?${params}` : '/api/shows';
+    const data = await apiRequest(endpoint);
     const storageMeta = (data.storageMeta && typeof data.storageMeta === 'object') ? data.storageMeta : null;
     state.storageMeta = storageMeta || (typeof data.storage === 'string' ? {label: data.storage} : state.storageMeta);
     state.storageLabel = resolveStorageLabel(state.storageMeta || data.storage || state.storageLabel);
@@ -1571,7 +1648,21 @@ async function openArchiveWorkspace(){
 async function loadArchivedShows(options = {}){
   const {silent = false, preserveSelection = false} = options;
   try{
-    const data = await apiRequest('/api/shows/archive');
+    const activeDiscipline = getActiveDisciplineId();
+    if(!state.archiveChartFilters || typeof state.archiveChartFilters !== 'object'){
+      state.archiveChartFilters = {startDate: null, endDate: null, operator: null, disciplineId: activeDiscipline || null};
+    }else if(typeof state.archiveChartFilters.disciplineId === 'undefined'){
+      state.archiveChartFilters.disciplineId = activeDiscipline || null;
+    }
+    const disciplineFilter = typeof state.archiveChartFilters.disciplineId === 'string' && state.archiveChartFilters.disciplineId
+      ? state.archiveChartFilters.disciplineId.trim().toLowerCase()
+      : '';
+    const params = new URLSearchParams();
+    if(disciplineFilter){
+      params.set('discipline', disciplineFilter);
+    }
+    const endpoint = params.toString() ? `/api/shows/archive?${params.toString()}` : '/api/shows/archive';
+    const data = await apiRequest(endpoint);
     const shows = Array.isArray(data.shows) ? data.shows.map(normalizeArchivedShow) : [];
     shows.sort((a, b)=> (Number.isFinite(b.archivedAt) ? b.archivedAt : 0) - (Number.isFinite(a.archivedAt) ? a.archivedAt : 0));
     state.archivedShows = shows;
@@ -1603,6 +1694,367 @@ async function loadArchivedShows(options = {}){
     }
     return false;
   }
+}
+
+async function openCalendarView(){
+  if(!state.calendarFilters || typeof state.calendarFilters !== 'object'){
+    state.calendarFilters = {disciplineId: getActiveDisciplineId() || null, query: ''};
+  }else if(typeof state.calendarFilters.disciplineId === 'undefined'){
+    state.calendarFilters.disciplineId = getActiveDisciplineId() || null;
+  }
+  setView('calendar');
+  renderCalendarDisciplineOptions();
+  renderCalendar();
+  await loadCalendarEvents({silent: true, broadcast: false, preserveData: true});
+}
+
+async function loadCalendarEvents(options = {}){
+  const {force = false, silent = false, broadcast = true, preserveData = false} = options;
+  if(state.calendarLoading){
+    return false;
+  }
+  state.calendarLoading = true;
+  let originalLabel = '';
+  const showBusy = Boolean(refreshCalendarBtn) && (force || (!silent && options.showBusy !== false));
+  if(showBusy){
+    originalLabel = refreshCalendarBtn.dataset.label || refreshCalendarBtn.textContent || '';
+    refreshCalendarBtn.disabled = true;
+    refreshCalendarBtn.textContent = 'Refreshing…';
+  }
+  try{
+    if(force){
+      await apiRequest('/api/calendar/sync', {method: 'POST'});
+    }
+    const data = await apiRequest('/api/calendar/events');
+    const events = Array.isArray(data?.events) ? data.events.map(normalizeCalendarEvent).filter(Boolean) : [];
+    events.sort((a, b)=> (getCalendarEventStartTimestamp(a) ?? Infinity) - (getCalendarEventStartTimestamp(b) ?? Infinity));
+    state.calendarEvents = events;
+    const syncedAt = toNumber(data?.syncedAt);
+    state.calendarSyncedAt = Number.isFinite(syncedAt)
+      ? syncedAt
+      : (events.length ? Date.now() : null);
+    renderCalendar();
+    if(broadcast){
+      notifyCalendarUpdated();
+    }
+    return true;
+  }catch(err){
+    console.error('Failed to load calendar events', err);
+    if(!silent){
+      toast(err.message || 'Failed to load calendar events', true);
+    }
+    if(!preserveData){
+      state.calendarEvents = [];
+      renderCalendar();
+    }
+    return false;
+  }finally{
+    state.calendarLoading = false;
+    if(showBusy && refreshCalendarBtn){
+      refreshCalendarBtn.disabled = false;
+      refreshCalendarBtn.textContent = originalLabel || 'Refresh calendar';
+    }
+  }
+}
+
+function renderCalendarDisciplineOptions(){
+  if(!calendarDisciplineFilter){
+    return;
+  }
+  if(!state.calendarFilters || typeof state.calendarFilters !== 'object'){
+    state.calendarFilters = {disciplineId: getActiveDisciplineId() || null, query: ''};
+  }
+  const disciplines = state.disciplines.length ? state.disciplines : [{id: 'drones', name: 'Drones'}];
+  const current = typeof state.calendarFilters.disciplineId === 'string'
+    ? state.calendarFilters.disciplineId.trim().toLowerCase()
+    : '';
+  const options = ['<option value="">All disciplines</option>'].concat(
+    disciplines.map(discipline => `<option value="${escapeHtml(discipline.id)}">${escapeHtml(discipline.name)}</option>`)
+  );
+  calendarDisciplineFilter.innerHTML = options.join('');
+  const hasMatch = disciplines.some(discipline => discipline.id === current);
+  const nextValue = hasMatch ? current : '';
+  calendarDisciplineFilter.value = nextValue;
+  state.calendarFilters.disciplineId = nextValue || null;
+}
+
+function onCalendarDisciplineFilterChange(){
+  if(!calendarDisciplineFilter){
+    return;
+  }
+  if(!state.calendarFilters || typeof state.calendarFilters !== 'object'){
+    state.calendarFilters = {disciplineId: null, query: ''};
+  }
+  const value = typeof calendarDisciplineFilter.value === 'string'
+    ? calendarDisciplineFilter.value.trim().toLowerCase()
+    : '';
+  state.calendarFilters.disciplineId = value || null;
+  renderCalendar();
+}
+
+function onCalendarSearchInput(){
+  if(!calendarSearchInput){
+    return;
+  }
+  if(!state.calendarFilters || typeof state.calendarFilters !== 'object'){
+    state.calendarFilters = {disciplineId: getActiveDisciplineId() || null, query: ''};
+  }
+  const query = typeof calendarSearchInput.value === 'string' ? calendarSearchInput.value.trim() : '';
+  state.calendarFilters.query = query;
+  renderCalendar();
+}
+
+function renderCalendar(){
+  if(!calendarEventList){
+    return;
+  }
+  if(!state.calendarFilters || typeof state.calendarFilters !== 'object'){
+    state.calendarFilters = {disciplineId: getActiveDisciplineId() || null, query: ''};
+  }
+  renderCalendarDisciplineOptions();
+  renderCalendarUpdatedAt();
+  if(calendarSearchInput){
+    calendarSearchInput.value = state.calendarFilters.query || '';
+  }
+  const events = Array.isArray(state.calendarEvents) ? state.calendarEvents.slice() : [];
+  const filtered = getFilteredCalendarEvents(events);
+  if(!events.length){
+    calendarEventList.innerHTML = '';
+    if(calendarEmpty){
+      calendarEmpty.hidden = false;
+      calendarEmpty.textContent = state.calendarLoading
+        ? 'Syncing calendar…'
+        : 'Calendar events will appear after syncing the feed.';
+    }
+    return;
+  }
+  if(!filtered.length){
+    calendarEventList.innerHTML = '';
+    if(calendarEmpty){
+      calendarEmpty.hidden = false;
+      calendarEmpty.textContent = 'No events match the selected filters.';
+    }
+    return;
+  }
+  if(calendarEmpty){
+    calendarEmpty.hidden = true;
+  }
+  const groups = groupCalendarEventsByDay(filtered);
+  calendarEventList.innerHTML = groups.map(group => buildCalendarDayMarkup(group)).join('');
+}
+
+function renderCalendarUpdatedAt(){
+  if(!calendarUpdatedAt){
+    return;
+  }
+  const syncedAt = toNumber(state.calendarSyncedAt);
+  if(Number.isFinite(syncedAt)){
+    calendarUpdatedAt.textContent = `Last synced ${formatDateTime(syncedAt)}`;
+  }else{
+    calendarUpdatedAt.textContent = 'Not synced yet';
+  }
+}
+
+function getFilteredCalendarEvents(events = state.calendarEvents){
+  const list = Array.isArray(events) ? events.slice() : [];
+  const filters = state.calendarFilters || {};
+  const disciplineFilter = typeof filters.disciplineId === 'string' && filters.disciplineId
+    ? filters.disciplineId.trim().toLowerCase()
+    : '';
+  const query = typeof filters.query === 'string' ? filters.query.trim().toLowerCase() : '';
+  const filtered = list.filter(event => {
+    if(disciplineFilter){
+      const eventDiscipline = typeof event?.disciplineId === 'string' ? event.disciplineId : null;
+      if((eventDiscipline || '') !== disciplineFilter){
+        return false;
+      }
+    }
+    if(query){
+      const haystack = [event?.title, event?.description, event?.location, event?.who]
+        .map(value => (typeof value === 'string' ? value.toLowerCase() : ''))
+        .join(' ');
+      if(!haystack.includes(query)){
+        return false;
+      }
+    }
+    return true;
+  });
+  filtered.sort((a, b) => (getCalendarEventStartTimestamp(a) ?? Infinity) - (getCalendarEventStartTimestamp(b) ?? Infinity));
+  return filtered;
+}
+
+function groupCalendarEventsByDay(events){
+  const buckets = new Map();
+  (Array.isArray(events) ? events : []).forEach(event => {
+    const {start, end} = getCalendarEventTimestamps(event);
+    const keyTimestamp = Number.isFinite(start) ? start : (Number.isFinite(end) ? end : null);
+    const key = Number.isFinite(keyTimestamp) ? new Date(keyTimestamp).toISOString().slice(0, 10) : 'undated';
+    if(!buckets.has(key)){
+      const label = Number.isFinite(keyTimestamp) ? formatCalendarDayLabel(keyTimestamp) : 'Undated events';
+      buckets.set(key, {label, events: [], firstTimestamp: Number.isFinite(keyTimestamp) ? keyTimestamp : Infinity});
+    }
+    const bucket = buckets.get(key);
+    bucket.events.push(event);
+    if(Number.isFinite(keyTimestamp) && keyTimestamp < bucket.firstTimestamp){
+      bucket.firstTimestamp = keyTimestamp;
+    }
+  });
+  const groups = Array.from(buckets.values());
+  groups.forEach(group => {
+    group.events.sort((a, b) => (getCalendarEventStartTimestamp(a) ?? Infinity) - (getCalendarEventStartTimestamp(b) ?? Infinity));
+    group.count = group.events.length;
+  });
+  groups.sort((a, b) => (a.firstTimestamp ?? Infinity) - (b.firstTimestamp ?? Infinity));
+  return groups;
+}
+
+function buildCalendarDayMarkup(group){
+  const countLabel = group.count === 1 ? '1 event' : `${group.count} events`;
+  const eventsMarkup = group.events.map(event => buildCalendarEventMarkup(event)).filter(Boolean).join('');
+  return `
+    <section class="calendar-day">
+      <div class="calendar-day-header">
+        <h3>${escapeHtml(group.label)}</h3>
+        <span class="calendar-day-count">${escapeHtml(countLabel)}</span>
+      </div>
+      <div class="calendar-day-events">
+        ${eventsMarkup}
+      </div>
+    </section>
+  `;
+}
+
+function buildCalendarEventMarkup(event){
+  if(!event){
+    return '';
+  }
+  const {start, end} = getCalendarEventTimestamps(event);
+  const timeLabel = formatCalendarEventTimeRange(event, start, end);
+  const metaPieces = [];
+  if(timeLabel){
+    metaPieces.push(`<span>${escapeHtml(timeLabel)}</span>`);
+  }
+  const disciplineName = event.disciplineId ? (getDisciplineDisplayName(event.disciplineId) || '') : '';
+  if(disciplineName){
+    metaPieces.push(`<span>${escapeHtml(disciplineName)}</span>`);
+  }
+  if(event.location){
+    metaPieces.push(`<span>${escapeHtml(event.location)}</span>`);
+  }
+  if(event.who){
+    metaPieces.push(`<span>${escapeHtml(event.who)}</span>`);
+  }
+  const metaMarkup = metaPieces.length ? `<div class="calendar-event-meta">${metaPieces.join('')}</div>` : '';
+  const title = escapeHtml(event.title || 'Untitled event');
+  const description = typeof event.description === 'string' ? event.description : '';
+  const descriptionMarkup = description
+    ? `<p class="calendar-event-description">${escapeHtml(description).replace(/\r?\n/g, '<br />')}</p>`
+    : '';
+  const links = [];
+  if(event.url){
+    links.push(`<a href="${escapeHtml(event.url)}" target="_blank" rel="noopener noreferrer">Open details ↗</a>`);
+  }
+  if(Array.isArray(event.attachments)){
+    event.attachments.forEach((attachment, index) => {
+      if(!attachment || !attachment.url){
+        return;
+      }
+      const label = attachment.label ? attachment.label : `Attachment ${index + 1}`;
+      links.push(`<a href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)} ↗</a>`);
+    });
+  }
+  const linksMarkup = links.length ? `<div class="calendar-event-links">${links.join('')}</div>` : '';
+  return `
+    <article class="calendar-event">
+      <div class="calendar-event-header">
+        <h4 class="calendar-event-title">${title}</h4>
+        ${metaMarkup}
+      </div>
+      ${descriptionMarkup}
+      ${linksMarkup}
+    </article>
+  `;
+}
+
+function formatCalendarEventTimeRange(event, startTs, endTs){
+  if(event?.allDay){
+    if(Number.isFinite(startTs) && Number.isFinite(endTs) && !isSameDayTs(startTs, endTs)){
+      return `All day • Ends ${formatCalendarDayLabel(endTs)}`;
+    }
+    return 'All day';
+  }
+  if(Number.isFinite(startTs) && Number.isFinite(endTs)){
+    if(isSameDayTs(startTs, endTs)){
+      return `${formatCalendarTime(startTs)} – ${formatCalendarTime(endTs)}`;
+    }
+    return `${formatDateTime(startTs)} – ${formatDateTime(endTs)}`;
+  }
+  if(Number.isFinite(startTs)){
+    return formatDateTime(startTs);
+  }
+  if(Number.isFinite(endTs)){
+    return `Ends ${formatDateTime(endTs)}`;
+  }
+  return '';
+}
+
+function formatCalendarTime(timestamp){
+  try{
+    return new Date(timestamp).toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit'});
+  }catch(err){
+    return '';
+  }
+}
+
+function formatCalendarDateLabel(timestamp){
+  try{
+    return new Date(timestamp).toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
+  }catch(err){
+    return '';
+  }
+}
+
+function formatCalendarDayLabel(timestamp){
+  try{
+    return new Date(timestamp).toLocaleDateString(undefined, {weekday: 'long', month: 'long', day: 'numeric'});
+  }catch(err){
+    return 'Undated events';
+  }
+}
+
+function isSameDayTs(a, b){
+  if(!Number.isFinite(a) || !Number.isFinite(b)){
+    return false;
+  }
+  const dateA = new Date(a);
+  const dateB = new Date(b);
+  return dateA.getFullYear() === dateB.getFullYear()
+    && dateA.getMonth() === dateB.getMonth()
+    && dateA.getDate() === dateB.getDate();
+}
+
+function getCalendarEventTimestamps(event){
+  const start = toTimestamp(typeof event?.startTs !== 'undefined' ? event.startTs : event?.start);
+  const end = toTimestamp(typeof event?.endTs !== 'undefined' ? event.endTs : event?.end);
+  return {
+    start: Number.isFinite(start) ? start : null,
+    end: Number.isFinite(end) ? end : null
+  };
+}
+
+function getCalendarEventStartTimestamp(event){
+  const {start, end} = getCalendarEventTimestamps(event);
+  if(Number.isFinite(start)){
+    return start;
+  }
+  if(Number.isFinite(end)){
+    return end;
+  }
+  return null;
+}
+
+async function onRefreshCalendar(){
+  await loadCalendarEvents({force: true, silent: false, broadcast: true});
 }
 
 async function onRefreshShows(){
@@ -1752,6 +2204,13 @@ function notifyConfigChanged(detail = {}){
   broadcastMessage('config:changed', detail);
 }
 
+function notifyCalendarUpdated(){
+  const syncedAt = toNumber(state.calendarSyncedAt);
+  broadcastMessage('calendar:updated', {
+    syncedAt: Number.isFinite(syncedAt) ? syncedAt : Date.now()
+  });
+}
+
 async function handleSyncMessage(event){
   const data = event?.data;
   if(!data || typeof data !== 'object' || data.source === syncState.id){
@@ -1767,6 +2226,9 @@ async function handleSyncMessage(event){
         break;
       case 'config:changed':
         await refreshConfigFromSync(data.detail);
+        break;
+      case 'calendar:updated':
+        await refreshCalendarFromSync();
         break;
       default:
         break;
@@ -1815,6 +2277,14 @@ async function refreshConfigFromSync(){
     setCurrentShow(state.currentShowId || null);
   }catch(err){
     console.error('Failed to sync configuration', err);
+  }
+}
+
+async function refreshCalendarFromSync(){
+  try{
+    await loadCalendarEvents({silent: true, broadcast: false, preserveData: true});
+  }catch(err){
+    console.error('Failed to sync calendar events', err);
   }
 }
 
@@ -1901,7 +2371,15 @@ function renderArchiveSelect(){
     archiveShowSelect.innerHTML = '<option value="">No archived shows</option>';
     archiveShowSelect.disabled = true;
     if(archiveMeta){
-      archiveMeta.textContent = 'Shows archive will populate once daily records are archived.';
+      const disciplineId = typeof state.archiveChartFilters?.disciplineId === 'string'
+        ? state.archiveChartFilters.disciplineId
+        : '';
+      if(disciplineId){
+        const name = getDisciplineDisplayName(disciplineId) || disciplineId;
+        archiveMeta.textContent = `No archived shows match the ${name} discipline.`;
+      }else{
+        archiveMeta.textContent = 'Shows archive will populate once daily records are archived.';
+      }
     }
     renderArchiveStats(null);
     renderArchiveDetails(null);
@@ -2075,12 +2553,34 @@ function refreshArchiveModeControlRefs(){
   }
 }
 
+function renderArchiveDisciplineFilterOptions(){
+  if(!archiveDisciplineFilter){
+    return;
+  }
+  if(!state.archiveChartFilters || typeof state.archiveChartFilters !== 'object'){
+    state.archiveChartFilters = {startDate: null, endDate: null, operator: null, disciplineId: getActiveDisciplineId() || null};
+  }
+  const disciplines = state.disciplines.length ? state.disciplines : [{id: 'drones', name: 'Drones'}];
+  const current = typeof state.archiveChartFilters.disciplineId === 'string'
+    ? state.archiveChartFilters.disciplineId.trim().toLowerCase()
+    : '';
+  const options = ['<option value="">All disciplines</option>'].concat(
+    disciplines.map(discipline => `<option value="${escapeHtml(discipline.id)}">${escapeHtml(discipline.name)}</option>`)
+  );
+  archiveDisciplineFilter.innerHTML = options.join('');
+  const hasMatch = disciplines.some(discipline => discipline.id === current);
+  const nextValue = hasMatch ? current : '';
+  archiveDisciplineFilter.value = nextValue;
+  state.archiveChartFilters.disciplineId = nextValue || null;
+}
+
 function renderArchiveChartControls(){
   renderArchiveSelectionMode();
+  renderArchiveDisciplineFilterOptions();
   const shows = Array.isArray(state.archivedShows) ? state.archivedShows : [];
   const filters = typeof state.archiveChartFilters === 'object' && state.archiveChartFilters
-    ? Object.assign({startDate: null, endDate: null, operator: null}, state.archiveChartFilters)
-    : {startDate: null, endDate: null, operator: null};
+    ? Object.assign({startDate: null, endDate: null, operator: null, disciplineId: null}, state.archiveChartFilters)
+    : {startDate: null, endDate: null, operator: null, disciplineId: null};
   state.archiveChartFilters = filters;
   if(archiveShowFilterStart){
     archiveShowFilterStart.value = filters.startDate || '';
@@ -2501,6 +3001,21 @@ function onArchiveMetricButtonsClick(event){
   toggleArchiveMetric(metricKey);
 }
 
+async function onArchiveDisciplineFilterChange(){
+  if(!archiveDisciplineFilter){
+    return;
+  }
+  const value = typeof archiveDisciplineFilter.value === 'string'
+    ? archiveDisciplineFilter.value.trim().toLowerCase()
+    : '';
+  if(!state.archiveChartFilters || typeof state.archiveChartFilters !== 'object'){
+    state.archiveChartFilters = {startDate: null, endDate: null, operator: null, disciplineId: null};
+  }
+  state.archiveChartFilters.disciplineId = value || null;
+  state.archiveChartFilters.operator = null;
+  await loadArchivedShows({silent: true, preserveSelection: false});
+}
+
 function toggleArchiveMetric(metricKey){
   if(!metricKey){
     return;
@@ -2618,15 +3133,25 @@ function getFilteredArchivedShows(shows = state.archivedShows, options = {}){
   const filters = state.archiveChartFilters || {};
   const includeDateFilter = options.includeDateFilter !== false;
   const includeOperatorFilter = options.includeOperatorFilter !== false;
+  const includeDisciplineFilter = options.includeDisciplineFilter !== false;
   const startTs = includeDateFilter ? parseFilterDate(filters.startDate, false) : null;
   const endTs = includeDateFilter ? parseFilterDate(filters.endDate, true) : null;
   const operatorFilter = includeOperatorFilter && typeof filters.operator === 'string' && filters.operator
     ? filters.operator.toLowerCase()
     : null;
+  const disciplineFilter = includeDisciplineFilter && typeof filters.disciplineId === 'string' && filters.disciplineId
+    ? filters.disciplineId.trim().toLowerCase()
+    : '';
   return list.filter(show => {
     const timestamp = getShowTimestamp(show);
     if(timestamp === null){
       return false;
+    }
+    if(includeDisciplineFilter && disciplineFilter){
+      const showDiscipline = typeof show?.disciplineId === 'string' ? show.disciplineId.trim().toLowerCase() : '';
+      if(showDiscipline !== disciplineFilter){
+        return false;
+      }
     }
     if(includeDateFilter && startTs !== null && timestamp < startTs){
       return false;
@@ -3647,7 +4172,8 @@ function collectShowHeaderValues(){
     label: showLabel?.value.trim() || '',
     leadPilot: leadPilotSelect?.value?.trim() || '',
     monkeyLead: monkeyLeadSelect?.value?.trim() || '',
-    notes: showNotes?.value.trim() || ''
+    notes: showNotes?.value.trim() || '',
+    disciplineId: getActiveDisciplineId()
   };
 }
 
@@ -3839,7 +4365,8 @@ async function duplicateShow(showId){
       crew: [...(source.crew||[])],
       leadPilot: source.leadPilot || '',
       monkeyLead: source.monkeyLead || '',
-      notes: source.notes || ''
+      notes: source.notes || '',
+      disciplineId: source.disciplineId || getActiveDisciplineId()
     };
     const payload = await apiRequest('/api/shows', {method:'POST', body: JSON.stringify(dupPayload)});
     upsertShow(payload);
@@ -4590,7 +5117,7 @@ function setView(view){
     return;
   }
   state.currentView = normalizedView;
-  const knownViews = ['discipline','landing','lead','operator','archive','admin','workspace'];
+  const knownViews = ['discipline','landing','lead','operator','archive','admin','workspace','calendar'];
   document.body.classList.remove(...knownViews.map(value => `view-${value}`));
   document.body.classList.add(`view-${normalizedView}`);
   setConfigSection(normalizedView);
@@ -4602,6 +5129,8 @@ function setView(view){
       viewBadge.classList.add('view-badge-operator');
     }else if(normalizedView === 'archive'){
       viewBadge.textContent = 'Archive workspace';
+    }else if(normalizedView === 'calendar'){
+      viewBadge.textContent = 'Production calendar';
     }else if(normalizedView === 'admin'){
       viewBadge.textContent = 'Admin workspace';
     }else if(normalizedView === 'landing'){
@@ -5299,6 +5828,88 @@ function escapeHtml(str){
   return String(str || '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 }
 
+function normalizeCalendarAttachment(raw){
+  if(!raw){
+    return null;
+  }
+  if(typeof raw === 'string'){
+    const url = raw.trim();
+    return url ? {url} : null;
+  }
+  if(typeof raw !== 'object'){
+    return null;
+  }
+  const urlCandidate = typeof raw.url === 'string' ? raw.url : (typeof raw.val === 'string' ? raw.val : '');
+  const url = urlCandidate.trim();
+  if(!url){
+    return null;
+  }
+  const attachment = {url};
+  const mimeSource = typeof raw.mimeType === 'string' && raw.mimeType.trim()
+    ? raw.mimeType
+    : (typeof raw.type === 'string' && raw.type.trim()
+      ? raw.type
+      : (raw.params?.FMTTYPE || raw.params?.['FMTTYPE'] || raw.params?.['X-FMTTYPE'] || ''));
+  if(typeof mimeSource === 'string' && mimeSource.trim()){
+    attachment.mimeType = mimeSource.trim();
+  }
+  const labelSource = typeof raw.label === 'string' && raw.label.trim()
+    ? raw.label
+    : (raw.params?.LABEL || raw.params?.['X-LABEL'] || '');
+  if(typeof labelSource === 'string' && labelSource.trim()){
+    attachment.label = labelSource.trim();
+  }
+  return attachment;
+}
+
+function normalizeCalendarEvent(raw = {}){
+  if(!raw || typeof raw !== 'object'){
+    return null;
+  }
+  const id = typeof raw.id === 'string' && raw.id.trim()
+    ? raw.id.trim()
+    : (typeof raw.uid === 'string' && raw.uid.trim() ? raw.uid.trim() : '');
+  if(!id){
+    return null;
+  }
+  const startTs = toTimestamp(typeof raw.startTs !== 'undefined' ? raw.startTs : raw.start);
+  const endTs = toTimestamp(typeof raw.endTs !== 'undefined' ? raw.endTs : raw.end);
+  const urlSource = typeof raw.url === 'string'
+    ? raw.url
+    : (raw.url && typeof raw.url === 'object' && typeof raw.url.val === 'string' ? raw.url.val : '');
+  const attachmentSource = Array.isArray(raw.attachments)
+    ? raw.attachments
+    : Array.isArray(raw.attach)
+      ? raw.attach
+      : (raw.attach ? [raw.attach] : []);
+  const attachments = attachmentSource.map(normalizeCalendarAttachment).filter(Boolean);
+  const createdAt = toTimestamp(raw.createdAt ?? raw.created);
+  const updatedAt = toTimestamp(raw.updatedAt ?? raw.lastModified ?? raw.lastmodified ?? raw.dtstamp);
+  return {
+    id,
+    uid: id,
+    title: typeof raw.title === 'string' && raw.title.trim()
+      ? raw.title.trim()
+      : (typeof raw.summary === 'string' && raw.summary.trim() ? raw.summary.trim() : 'Untitled event'),
+    description: typeof raw.description === 'string' ? raw.description.trim() : '',
+    location: typeof raw.location === 'string' ? raw.location.trim() : '',
+    url: typeof urlSource === 'string' ? urlSource.trim() : '',
+    start: Number.isFinite(startTs) ? new Date(startTs).toISOString() : (typeof raw.start === 'string' ? raw.start : null),
+    end: Number.isFinite(endTs) ? new Date(endTs).toISOString() : (typeof raw.end === 'string' ? raw.end : null),
+    startTs: Number.isFinite(startTs) ? startTs : null,
+    endTs: Number.isFinite(endTs) ? endTs : null,
+    allDay: Boolean(raw.allDay || raw.start?.dateOnly || raw.datetype === 'date' || String(raw['MICROSOFT-CDO-ALLDAYEVENT']).toUpperCase() === 'TRUE'),
+    disciplineId: typeof raw.disciplineId === 'string' && raw.disciplineId.trim()
+      ? raw.disciplineId.trim().toLowerCase()
+      : null,
+    category: typeof raw.category === 'string' ? raw.category.trim() : (Array.isArray(raw.categories) && raw.categories[0] ? String(raw.categories[0]).trim() : ''),
+    who: typeof raw.who === 'string' ? raw.who.trim() : (typeof raw['TEAMUP-WHO'] === 'string' ? raw['TEAMUP-WHO'].trim() : ''),
+    attachments,
+    createdAt: Number.isFinite(createdAt) ? createdAt : null,
+    updatedAt: Number.isFinite(updatedAt) ? updatedAt : null
+  };
+}
+
 function normalizeArchivedShow(raw = {}){
   const crew = Array.isArray(raw.crew) ? normalizeNameList(raw.crew || [], {sort: false}) : [];
   const entries = Array.isArray(raw.entries)
@@ -5316,7 +5927,10 @@ function normalizeArchivedShow(raw = {}){
     entries,
     createdAt: toNumber(raw.createdAt),
     archivedAt: toNumber(raw.archivedAt),
-    deletedAt: toNumber(raw.deletedAt)
+    deletedAt: toNumber(raw.deletedAt),
+    disciplineId: typeof raw.disciplineId === 'string' && raw.disciplineId.trim()
+      ? raw.disciplineId.trim().toLowerCase()
+      : null
   };
   return show;
 }
@@ -5344,6 +5958,28 @@ function normalizeArchivedEntry(raw = {}){
   const delay = toNumber(raw.delaySec);
   entry.delaySec = Number.isFinite(delay) ? delay : null;
   return entry;
+}
+
+function toTimestamp(value){
+  if(value == null){
+    return null;
+  }
+  if(typeof value === 'number' && Number.isFinite(value)){
+    return value;
+  }
+  const numeric = Number(value);
+  if(Number.isFinite(numeric)){
+    return numeric;
+  }
+  if(value instanceof Date){
+    const time = value.getTime();
+    return Number.isFinite(time) ? time : null;
+  }
+  if(typeof value === 'string' && value){
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 function toNumber(value){

@@ -79,7 +79,8 @@ a{color:var(--primary);text-decoration:none}
 body.view-lead #roleHome,
 body.view-operator #roleHome,
 body.view-archive #roleHome,
-body.view-admin #roleHome{display:inline-flex}
+body.view-admin #roleHome,
+body.view-calendar #roleHome{display:inline-flex}
 #viewBadge{display:none}
 body.view-lead #viewBadge,
 body.view-operator #viewBadge,
@@ -87,7 +88,8 @@ body.view-archive #viewBadge,
 body.view-admin #viewBadge,
 body.view-landing #viewBadge,
 body.view-discipline #viewBadge,
-body.view-workspace #viewBadge{display:inline-flex}
+body.view-workspace #viewBadge,
+body.view-calendar #viewBadge{display:inline-flex}
 body.view-landing #refreshShows{display:none}
 .view-lead-only,
 .view-operator-only,
@@ -95,7 +97,8 @@ body.view-landing #refreshShows{display:none}
 .view-archive-only,
 .view-admin-only,
 .view-discipline-only,
-.view-workspace-only{display:none !important}
+.view-workspace-only,
+.view-calendar-only{display:none !important}
 body.view-lead .view-lead-only{display:block !important}
 body.view-operator .view-operator-only{display:block !important}
 body.view-landing .view-landing-only{display:block !important}
@@ -103,6 +106,7 @@ body.view-archive .view-archive-only{display:block !important}
 body.view-admin .view-admin-only{display:block !important}
 body.view-discipline .view-discipline-only{display:block !important}
 body.view-workspace .view-workspace-only{display:block !important}
+body.view-calendar .view-calendar-only{display:block !important}
 #landingView{display:none;text-align:center;padding:38px 20px}
 body.view-landing #landingView{display:block}
 .discipline-options,
@@ -126,8 +130,7 @@ body.view-landing #landingView{display:block}
   flex-wrap:wrap;
   width:min(100%, 640px);
 }
-.role-options-main,
-.role-options-archive{
+.role-options-main{
   display:flex;
   gap:16px;
   justify-content:center;
@@ -136,12 +139,15 @@ body.view-landing #landingView{display:block}
 .role-options-main .role-btn{
   flex:1 1 180px;
 }
-.role-options-archive{
-  padding-top:4px;
+.discipline-actions{
+  display:flex;
+  gap:16px;
+  flex-wrap:wrap;
+  justify-content:center;
+  margin:24px auto 0;
 }
-.role-options-archive .role-btn{
-  flex:1 1 220px;
-  max-width:320px;
+.discipline-action-btn{
+  min-width:180px;
 }
 .user-role-grid{
   display:grid;
@@ -1292,3 +1298,84 @@ summary::-webkit-details-marker{display:none}
   overflow:auto
 }
 .webhook-json code{color:inherit}
+.calendar-panel-actions{
+  display:flex;
+  gap:12px;
+  flex-wrap:wrap;
+  align-items:center;
+}
+.calendar-controls{
+  display:flex;
+  flex-wrap:wrap;
+  gap:16px;
+  margin:24px 0;
+}
+.calendar-content{
+  display:flex;
+  flex-direction:column;
+  gap:18px;
+}
+.calendar-event-list{
+  display:flex;
+  flex-direction:column;
+  gap:18px;
+}
+#calendarEmpty{margin:24px 0;}
+.calendar-day{
+  background:var(--panel);
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:16px;
+  padding:20px;
+  box-shadow:0 18px 36px rgba(0,0,0,.32);
+}
+.calendar-day-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:16px;
+}
+.calendar-day-header h3{margin:0;font-size:18px;color:var(--text);}
+.calendar-day-count{font-size:14px;color:var(--text-dim);}
+.calendar-day-events{display:flex;flex-direction:column;gap:12px;}
+.calendar-event{
+  background:rgba(15,17,21,.92);
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:12px;
+  padding:16px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.calendar-event-header{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+}
+.calendar-event-title{margin:0;font-size:16px;color:var(--text);}
+.calendar-event-meta{
+  display:flex;
+  flex-wrap:wrap;
+  gap:12px;
+  font-size:14px;
+  color:var(--text-dim);
+}
+.calendar-event-description{
+  margin:0;
+  font-size:14px;
+  color:var(--text);
+  white-space:pre-wrap;
+}
+.calendar-event-links{
+  display:flex;
+  flex-wrap:wrap;
+  gap:12px;
+  font-size:14px;
+}
+.calendar-event-links a{color:var(--primary);text-decoration:none;}
+.calendar-event-links a:hover{text-decoration:underline;}
+@media (max-width:720px){
+  .calendar-controls{flex-direction:column;align-items:stretch;}
+  .calendar-panel-actions{justify-content:flex-start;}
+}

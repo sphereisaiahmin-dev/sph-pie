@@ -1,3 +1,5 @@
+import { parseIcsEvents } from './utils/parseIcsEvents.js';
+
 const ISSUE_MAP = {
   'Tracking lost': ['occlusion','calibration','marker loss','software','unknown'],
   'Failed to launch': ['mechanical','arming','safety','unknown'],
@@ -95,6 +97,8 @@ const ARCHIVE_SUMMARY_KEYS = [
   'completionRate'
 ];
 
+const ICAL_FEED_URL = 'https://ics.teamup.com/feed/8orye2s63sbb3virutab5ny6beycko/12007214.ics';
+
 const ISSUE_METRIC_PREFIX = 'issue:';
 const issueMetricDefCache = new Map();
 
@@ -176,6 +180,28 @@ const syncState = {
     : `sync-${Date.now()}-${Math.random().toString(16).slice(2)}`
 };
 
+const calendarState = {
+  initialized: false,
+  loading: false,
+  hasLoaded: false,
+  error: null,
+  events: [],
+  view: 'month',
+  referenceDate: startOfDay(new Date()),
+  selectedDate: startOfDay(new Date()),
+  selectedEventId: null,
+  searchQuery: ''
+};
+
+const CALENDAR_EVENT_COLORS = ['#4aa3ff', '#f97316', '#22d3ee', '#a855f7', '#10b981', '#facc15', '#f472b6'];
+const CALENDAR_DAY_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const CALENDAR_VIEWS = ['month','week','day'];
+
+const calendarMonthFormatter = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' });
+const calendarWeekFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+const calendarDayFormatter = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+const calendarTimeFormatter = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+
 const ARCHIVE_CHART_COLORS = ['#16a34a', '#f97316', '#38bdf8', '#a855f7', '#facc15', '#f472b6', '#22d3ee'];
 let archiveChartInstance = null;
 let uiInitialized = false;
@@ -213,6 +239,25 @@ const workspaceList = el('workspaceList');
 const disciplineTitle = el('disciplineTitle');
 const landingTitle = el('landingTitle');
 const landingSubtitle = el('landingSubtitle');
+const landingCalendar = el('landingCalendar');
+const calendarStatusText = el('calendarStatusText');
+const calendarCurrentRange = el('calendarCurrentRange');
+const calendarViewButtons = el('calendarViewButtons');
+const calendarPrevBtn = el('calendarPrev');
+const calendarNextBtn = el('calendarNext');
+const calendarTodayBtn = el('calendarToday');
+const calendarRetryBtn = el('calendarRetry');
+const calendarSearchInput = el('calendarSearch');
+const calendarViewport = el('calendarViewport');
+const calendarDayTitle = el('calendarDayTitle');
+const calendarDaySubtitle = el('calendarDaySubtitle');
+const calendarDayEvents = el('calendarDayEvents');
+const calendarDetail = el('calendarDetail');
+const calendarDetailTitle = el('calendarDetailTitle');
+const calendarDetailTime = el('calendarDetailTime');
+const calendarDetailLocation = el('calendarDetailLocation');
+const calendarDetailDescription = el('calendarDetailDescription');
+const calendarDetailCloseBtn = el('calendarDetailClose');
 const workspaceTitle = el('workspaceTitle');
 const userRoleGrid = el('userRoleGrid');
 const userIdInput = el('userId');
@@ -1491,6 +1536,559 @@ function updateActiveDisciplineUi(){
     disciplineTitle.textContent = 'Choose discipline';
   }
   updateDisciplineHeader();
+}
+
+function ensureCalendarSetup(){
+  if(!landingCalendar || calendarState.initialized){
+    if(calendarState.initialized && !calendarState.loading && !calendarState.hasLoaded){
+      loadCalendarEvents();
+    }
+    if(calendarState.initialized){
+      renderCalendar();
+    }
+    return;
+  }
+  calendarState.initialized = true;
+  calendarState.referenceDate = startOfDay(new Date());
+  calendarState.selectedDate = startOfDay(new Date());
+  if(calendarPrevBtn){
+    calendarPrevBtn.addEventListener('click', ()=> shiftCalendar(-1));
+  }
+  if(calendarNextBtn){
+    calendarNextBtn.addEventListener('click', ()=> shiftCalendar(1));
+  }
+  if(calendarTodayBtn){
+    calendarTodayBtn.addEventListener('click', ()=> setCalendarToToday());
+  }
+  if(calendarViewButtons){
+    calendarViewButtons.addEventListener('click', onCalendarViewClick);
+  }
+  if(calendarSearchInput){
+    calendarSearchInput.addEventListener('input', onCalendarSearchInput);
+  }
+  if(calendarViewport){
+    calendarViewport.addEventListener('click', onCalendarViewportClick);
+  }
+  if(calendarDayEvents){
+    calendarDayEvents.addEventListener('click', onCalendarDayEventsClick);
+  }
+  if(calendarRetryBtn){
+    calendarRetryBtn.addEventListener('click', ()=> loadCalendarEvents(true));
+  }
+  if(calendarDetailCloseBtn){
+    calendarDetailCloseBtn.addEventListener('click', ()=>{
+      calendarState.selectedEventId = null;
+      renderCalendar();
+    });
+  }
+  calendarState.loading = true;
+  updateCalendarStatus();
+  renderCalendar();
+  calendarState.loading = false;
+  loadCalendarEvents();
+}
+
+function onCalendarViewClick(event){
+  const target = event.target.closest('[data-calendar-view]');
+  if(!target){
+    return;
+  }
+  event.preventDefault();
+  setCalendarView(target.dataset.calendarView);
+}
+
+function onCalendarSearchInput(event){
+  calendarState.searchQuery = (event.target.value || '').trim().toLowerCase();
+  calendarState.selectedEventId = null;
+  renderCalendar();
+}
+
+function onCalendarViewportClick(event){
+  const eventTarget = event.target.closest('[data-calendar-event-id]');
+  if(eventTarget){
+    event.preventDefault();
+    setCalendarSelectedEvent(eventTarget.dataset.calendarEventId);
+    return;
+  }
+  const dayTarget = event.target.closest('[data-calendar-date]');
+  if(dayTarget){
+    event.preventDefault();
+    setCalendarSelectedDate(parseDateKey(dayTarget.dataset.calendarDate));
+  }
+}
+
+function onCalendarDayEventsClick(event){
+  const target = event.target.closest('[data-calendar-event-id]');
+  if(!target){
+    return;
+  }
+  event.preventDefault();
+  setCalendarSelectedEvent(target.dataset.calendarEventId);
+}
+
+function setCalendarView(view){
+  const normalized = typeof view === 'string' ? view.trim().toLowerCase() : 'month';
+  if(!CALENDAR_VIEWS.includes(normalized)){
+    return;
+  }
+  if(calendarState.view === normalized){
+    return;
+  }
+  calendarState.view = normalized;
+  if(normalized === 'day'){
+    calendarState.referenceDate = startOfDay(calendarState.selectedDate || calendarState.referenceDate);
+  }else if(calendarState.selectedDate){
+    calendarState.referenceDate = startOfDay(calendarState.selectedDate);
+  }
+  renderCalendar();
+}
+
+function shiftCalendar(step){
+  const current = calendarState.referenceDate ? new Date(calendarState.referenceDate) : startOfDay(new Date());
+  if(calendarState.view === 'month'){
+    current.setMonth(current.getMonth() + step);
+  }else if(calendarState.view === 'week'){
+    current.setDate(current.getDate() + (step * 7));
+  }else{
+    current.setDate(current.getDate() + step);
+  }
+  calendarState.referenceDate = startOfDay(current);
+  if(calendarState.view !== 'day'){
+    calendarState.selectedDate = startOfDay(current);
+  }
+  renderCalendar();
+}
+
+function setCalendarToToday(){
+  const today = startOfDay(new Date());
+  calendarState.referenceDate = today;
+  calendarState.selectedDate = today;
+  renderCalendar();
+}
+
+async function loadCalendarEvents(force = false){
+  if(calendarState.loading){
+    return;
+  }
+  if(calendarState.hasLoaded && !force){
+    return;
+  }
+  if(!ICAL_FEED_URL){
+    return;
+  }
+  calendarState.loading = true;
+  calendarState.error = null;
+  updateCalendarStatus();
+  try{
+    const response = await fetch(ICAL_FEED_URL, {cache: 'no-store'});
+    if(!response.ok){
+      throw new Error(`Feed responded with ${response.status}`);
+    }
+    const text = await response.text();
+    const parsed = parseIcsEvents(text);
+    const cutoff = getCalendarCutoff();
+    const events = (parsed || [])
+      .filter(event => event && event.start)
+      .filter(event =>{
+        const start = event.start ? event.start.getTime() : 0;
+        const end = event.end ? event.end.getTime() : start;
+        return end >= cutoff.getTime();
+      })
+      .map(event => ({
+        ...event,
+        start: event.start ? new Date(event.start) : null,
+        end: event.end ? new Date(event.end) : (event.start ? new Date(event.start) : null)
+      }))
+      .sort((a, b) => (a.start?.getTime() || 0) - (b.start?.getTime() || 0));
+    calendarState.events = events;
+    calendarState.hasLoaded = true;
+    if(events.length && (!calendarState.selectedDate || calendarState.selectedDate < cutoff)){
+      calendarState.selectedDate = startOfDay(events[0].start);
+      calendarState.referenceDate = startOfDay(events[0].start);
+    }
+    if(calendarState.selectedEventId && !getEventById(calendarState.selectedEventId)){
+      calendarState.selectedEventId = null;
+    }
+  }catch(err){
+    console.error('Failed to load calendar feed', err);
+    calendarState.error = err;
+  }finally{
+    calendarState.loading = false;
+    updateCalendarStatus();
+    renderCalendar();
+  }
+}
+
+function updateCalendarStatus(){
+  if(!calendarStatusText){
+    return;
+  }
+  if(calendarState.error){
+    calendarStatusText.textContent = 'Unable to load the discipline calendar. Please retry.';
+    if(calendarRetryBtn){
+      calendarRetryBtn.hidden = false;
+    }
+    return;
+  }
+  if(calendarState.loading && !calendarState.hasLoaded){
+    calendarStatusText.textContent = 'Loading schedule…';
+    if(calendarRetryBtn){
+      calendarRetryBtn.hidden = true;
+    }
+    return;
+  }
+  if(!calendarState.events.length){
+    calendarStatusText.textContent = 'No upcoming events have been published yet.';
+  }else{
+    calendarStatusText.textContent = `${calendarState.events.length} upcoming events`;
+  }
+  if(calendarRetryBtn){
+    calendarRetryBtn.hidden = true;
+  }
+}
+
+function renderCalendar(){
+  if(!landingCalendar){
+    return;
+  }
+  const selected = calendarState.selectedDate || startOfDay(new Date());
+  calendarState.selectedDate = startOfDay(selected);
+  updateCalendarControls();
+  renderCalendarBody();
+  renderCalendarSidebar();
+}
+
+function updateCalendarControls(){
+  if(calendarCurrentRange){
+    calendarCurrentRange.textContent = formatCalendarRange(calendarState.view, calendarState.referenceDate);
+  }
+  if(calendarViewButtons){
+    qsa('[data-calendar-view]', calendarViewButtons).forEach(button =>{
+      const isActive = button.dataset.calendarView === calendarState.view;
+      button.classList.toggle('is-active', isActive);
+      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
+  }
+}
+
+function formatCalendarRange(view, referenceDate){
+  const ref = referenceDate ? new Date(referenceDate) : startOfDay(new Date());
+  if(view === 'week'){
+    const start = getStartOfWeek(ref);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    const startLabel = calendarWeekFormatter.format(start);
+    const endLabel = calendarWeekFormatter.format(end);
+    const yearLabel = start.getFullYear() === end.getFullYear()
+      ? `${start.getFullYear()}`
+      : `${start.getFullYear()} – ${end.getFullYear()}`;
+    return `${startLabel} – ${endLabel}, ${yearLabel}`;
+  }
+  if(view === 'day'){
+    return calendarDayFormatter.format(ref);
+  }
+  return calendarMonthFormatter.format(ref);
+}
+
+function renderCalendarBody(){
+  if(!calendarViewport){
+    return;
+  }
+  calendarViewport.dataset.view = calendarState.view;
+  if(calendarState.loading && !calendarState.hasLoaded){
+    calendarViewport.innerHTML = '<div class="calendar-loading">Loading schedule…</div>';
+    return;
+  }
+  if(calendarState.error && !calendarState.events.length){
+    calendarViewport.innerHTML = '<p class="calendar-empty">Unable to load events from the feed.</p>';
+    return;
+  }
+  const visibleEvents = getVisibleEvents();
+  if(!visibleEvents.length){
+    const message = calendarState.events.length
+      ? 'No events match the current search.'
+      : 'No events to display.';
+    calendarViewport.innerHTML = `<p class="calendar-empty">${message}</p>`;
+    return;
+  }
+  if(calendarState.view === 'week'){
+    renderWeekOrDayView(7);
+  }else if(calendarState.view === 'day'){
+    renderWeekOrDayView(1);
+  }else{
+    renderMonthView();
+  }
+}
+
+function renderMonthView(){
+  const reference = calendarState.referenceDate ? new Date(calendarState.referenceDate) : startOfDay(new Date());
+  const start = new Date(reference.getFullYear(), reference.getMonth(), 1);
+  const offset = start.getDay();
+  const cursor = new Date(start);
+  cursor.setDate(cursor.getDate() - offset);
+  const cells = [];
+  for(let i=0;i<42;i+=1){
+    const cellDate = new Date(cursor);
+    const dayEvents = getEventsForDay(cellDate);
+    const classes = ['calendar-month-day'];
+    if(cellDate.getMonth() !== reference.getMonth()){
+      classes.push('is-muted');
+    }
+    if(isSameDay(cellDate, new Date())){
+      classes.push('is-today');
+    }
+    if(isSameDay(cellDate, calendarState.selectedDate)){
+      classes.push('is-selected');
+    }
+    const dots = dayEvents.slice(0, 3).map(event => {
+      const color = escapeHtml(getEventColor(event.id));
+      return `<span class="calendar-dot" style="background:${color};"></span>`;
+    }).join('');
+    const extra = dayEvents.length > 3 ? `<span class="calendar-more">+${dayEvents.length - 3}</span>` : '';
+    const label = escapeHtml(`${formatFullDate(cellDate)} (${dayEvents.length} events)`);
+    cells.push(`<button type="button" class="${classes.join(' ')}" data-calendar-date="${formatDateKey(cellDate)}" aria-label="${label}"><span class="calendar-day-number">${cellDate.getDate()}</span><span class="calendar-day-dots">${dots}${extra}</span></button>`);
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  const weekdays = CALENDAR_DAY_LABELS.map(name => `<div>${escapeHtml(name)}</div>`).join('');
+  calendarViewport.innerHTML = `<div class="calendar-weekdays">${weekdays}</div><div class="calendar-month-grid">${cells.join('')}</div>`;
+}
+
+function renderWeekOrDayView(dayCount){
+  const base = calendarState.view === 'day'
+    ? startOfDay(calendarState.referenceDate || new Date())
+    : getStartOfWeek(calendarState.referenceDate || new Date());
+  const hours = Array.from({length: 24}, (_, hour) => `<div>${escapeHtml(formatHourLabel(hour))}</div>`).join('');
+  const columns = [];
+  for(let i=0;i<dayCount;i+=1){
+    const dayDate = new Date(base);
+    dayDate.setDate(base.getDate() + i);
+    columns.push(renderWeekDayColumn(dayDate));
+  }
+  calendarViewport.innerHTML = `<div class="calendar-week-grid" style="grid-template-columns:60px repeat(${dayCount}, minmax(0, 1fr));"><div class="calendar-week-times">${hours}</div>${columns.join('')}</div>`;
+}
+
+function renderWeekDayColumn(dayDate){
+  const classes = ['calendar-week-day'];
+  if(isSameDay(dayDate, new Date())){
+    classes.push('is-today');
+  }
+  if(isSameDay(dayDate, calendarState.selectedDate)){
+    classes.push('is-selected');
+  }
+  const events = getEventsForDay(dayDate);
+  const body = events.length
+    ? events.map(event => buildWeekEventBlock(event, dayDate)).join('')
+    : '<div class="calendar-empty">No events</div>';
+  const label = `${calendarWeekFormatter.format(dayDate)} (${dayDate.toLocaleDateString(undefined, {weekday: 'short'})})`;
+  return `<div class="${classes.join(' ')}" data-calendar-date="${formatDateKey(dayDate)}"><div class="calendar-week-day-label">${escapeHtml(label)}</div><div class="calendar-week-day-body">${body}</div></div>`;
+}
+
+function buildWeekEventBlock(event, dayDate){
+  const dayStart = startOfDay(dayDate).getTime();
+  const dayEnd = dayStart + (24 * 60 * 60 * 1000);
+  let start = event.start ? event.start.getTime() : dayStart;
+  let end = event.end ? event.end.getTime() : start;
+  start = Math.max(start, dayStart);
+  end = Math.min(end, dayEnd);
+  if(end <= start){
+    end = start + 30 * 60 * 1000;
+  }
+  let top;
+  let height;
+  if(event.allDay){
+    top = 0.5;
+    height = 18;
+  }else{
+    const minutesFromStart = (start - dayStart) / 60000;
+    const duration = Math.max(30, (end - start) / 60000);
+    top = (minutesFromStart / 1440) * 100;
+    height = Math.min(100 - top, (duration / 1440) * 100);
+  }
+  const color = getEventColor(event.id);
+  const background = applyAlpha(color, event.allDay ? 0.35 : 0.2);
+  const safeColor = escapeHtml(color);
+  const safeBackground = escapeHtml(background);
+  return `<button type="button" class="calendar-event-block" data-calendar-event-id="${escapeHtml(event.id)}" style="top:${top}%;height:${height}%;--event-color:${safeColor};background:${safeBackground};"><span class="calendar-event-block-title">${escapeHtml(event.title || 'Untitled')}</span><span class="calendar-event-block-time">${escapeHtml(formatEventTime(event, {short: true}))}</span></button>`;
+}
+
+function renderCalendarSidebar(){
+  if(!calendarDayTitle || !calendarDaySubtitle || !calendarDayEvents){
+    return;
+  }
+  const selected = calendarState.selectedDate ? new Date(calendarState.selectedDate) : startOfDay(new Date());
+  calendarDayTitle.textContent = formatFullDate(selected);
+  const events = getEventsForDay(selected);
+  calendarDaySubtitle.textContent = events.length
+    ? `${events.length} ${events.length === 1 ? 'event' : 'events'} scheduled`
+    : 'No events this day';
+  renderDayEventsList(events);
+  renderCalendarDetailPanel();
+}
+
+function renderDayEventsList(events){
+  if(!calendarDayEvents){
+    return;
+  }
+  if(!events.length){
+    calendarDayEvents.innerHTML = '<p class="calendar-empty">No events this day.</p>';
+    return;
+  }
+  calendarDayEvents.innerHTML = events.map(event =>{
+    const color = escapeHtml(getEventColor(event.id));
+    const isActive = calendarState.selectedEventId === event.id;
+    return `<button type="button" class="calendar-day-event${isActive ? ' is-active' : ''}" data-calendar-event-id="${escapeHtml(event.id)}"><span class="calendar-event-color" style="background:${color};"></span><span class="calendar-day-event-content"><span class="calendar-day-event-title">${escapeHtml(event.title || 'Untitled')}</span><span class="calendar-day-event-meta">${escapeHtml(formatEventTime(event, {short: true}))}</span></span></button>`;
+  }).join('');
+}
+
+function renderCalendarDetailPanel(){
+  if(!calendarDetail){
+    return;
+  }
+  const event = getEventById(calendarState.selectedEventId);
+  if(!event || !matchesSearch(event)){
+    calendarDetail.hidden = true;
+    calendarState.selectedEventId = null;
+    return;
+  }
+  calendarDetail.hidden = false;
+  if(calendarDetailTitle){
+    calendarDetailTitle.textContent = event.title || 'Event details';
+  }
+  if(calendarDetailTime){
+    calendarDetailTime.textContent = formatEventDateTime(event);
+  }
+  if(calendarDetailLocation){
+    calendarDetailLocation.textContent = event.location || '—';
+  }
+  if(calendarDetailDescription){
+    const safeDescription = event.description
+      ? escapeHtml(event.description).replace(/\n/g, '<br />')
+      : '—';
+    calendarDetailDescription.innerHTML = safeDescription;
+  }
+}
+
+function getVisibleEvents(){
+  if(!calendarState.searchQuery){
+    return calendarState.events;
+  }
+  return calendarState.events.filter(matchesSearch);
+}
+
+function matchesSearch(event){
+  if(!calendarState.searchQuery){
+    return true;
+  }
+  const query = calendarState.searchQuery;
+  return ['title','description','location'].some(key => {
+    const value = event[key];
+    return typeof value === 'string' && value.toLowerCase().includes(query);
+  });
+}
+
+function getEventsForDay(date){
+  const start = startOfDay(date);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return getEventsInRange(start, end);
+}
+
+function getEventsInRange(start, end){
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  return getVisibleEvents().filter(event =>{
+    const eventStart = event.start ? event.start.getTime() : 0;
+    const eventEnd = event.end ? event.end.getTime() : eventStart;
+    return eventEnd > startMs && eventStart < endMs;
+  });
+}
+
+function getEventById(eventId){
+  if(!eventId){
+    return null;
+  }
+  return calendarState.events.find(event => event.id === eventId) || null;
+}
+
+function setCalendarSelectedDate(date){
+  if(!(date instanceof Date)){
+    return;
+  }
+  calendarState.selectedDate = startOfDay(date);
+  calendarState.selectedEventId = null;
+  if(calendarState.view === 'day'){
+    calendarState.referenceDate = startOfDay(date);
+  }
+  renderCalendar();
+}
+
+function setCalendarSelectedEvent(eventId){
+  const event = getEventById(eventId);
+  calendarState.selectedEventId = event ? event.id : null;
+  if(event && event.start){
+    calendarState.selectedDate = startOfDay(event.start);
+    if(calendarState.view === 'day'){
+      calendarState.referenceDate = startOfDay(event.start);
+    }
+  }
+  renderCalendar();
+}
+
+function formatEventTime(event, options = {}){
+  if(!event){
+    return '—';
+  }
+  if(event.allDay){
+    return 'All day';
+  }
+  const start = event.start ? calendarTimeFormatter.format(event.start) : '';
+  const end = event.end ? calendarTimeFormatter.format(event.end) : '';
+  if(!start){
+    return '—';
+  }
+  if(options.short || !end){
+    return end ? `${start} – ${end}` : start;
+  }
+  return `${start} – ${end}`;
+}
+
+function formatEventDateTime(event){
+  const date = event.start ? calendarDayFormatter.format(event.start) : calendarDayFormatter.format(new Date());
+  const time = formatEventTime(event);
+  return event.allDay ? `${date} • All day` : `${date} • ${time}`;
+}
+
+function formatFullDate(date){
+  return calendarDayFormatter.format(date || new Date());
+}
+
+function formatHourLabel(hour){
+  const suffix = hour >= 12 ? 'PM' : 'AM';
+  const normalized = hour % 12 || 12;
+  return `${normalized} ${suffix}`;
+}
+
+function getEventColor(eventId){
+  const index = Math.abs(hashString(eventId || '')) % CALENDAR_EVENT_COLORS.length;
+  return CALENDAR_EVENT_COLORS[index];
+}
+
+function applyAlpha(hex, alpha){
+  if(typeof hex !== 'string'){ return `rgba(74,163,255,${alpha})`; }
+  const normalized = hex.replace('#','');
+  if(normalized.length !== 6){
+    return `rgba(74,163,255,${alpha})`;
+  }
+  const r = parseInt(normalized.slice(0,2), 16);
+  const g = parseInt(normalized.slice(2,4), 16);
+  const b = parseInt(normalized.slice(4,6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function getCalendarCutoff(){
+  const cutoff = startOfDay(new Date());
+  cutoff.setMonth(cutoff.getMonth() - 1);
+  return cutoff;
 }
 
 function renderUserRoleGrid(selectedRoles = []){
@@ -4625,6 +5223,7 @@ function setView(view){
     renderWorkspacePlaceholder();
   }else if(normalizedView === 'landing'){
     toggleConfig(false);
+    ensureCalendarSetup();
   }
   if(normalizedView === 'operator'){
     syncOperatorShowSelect();
@@ -5293,6 +5892,54 @@ function formatDateTime(value){
   }catch(err){
     return '';
   }
+}
+
+function startOfDay(input){
+  const date = input instanceof Date ? new Date(input) : new Date();
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function getStartOfWeek(input){
+  const date = startOfDay(input || new Date());
+  const day = date.getDay();
+  date.setDate(date.getDate() - day);
+  return date;
+}
+
+function formatDateKey(date){
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function parseDateKey(value){
+  if(typeof value !== 'string'){ return null; }
+  const parts = value.split('-').map(Number);
+  if(parts.length !== 3 || parts.some(part => Number.isNaN(part))){
+    return null;
+  }
+  return startOfDay(new Date(parts[0], parts[1] - 1, parts[2]));
+}
+
+function isSameDay(a, b){
+  if(!(a instanceof Date) || !(b instanceof Date)){
+    return false;
+  }
+  return a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate();
+}
+
+function hashString(value){
+  const text = typeof value === 'string' ? value : String(value || '');
+  let hash = 0;
+  for(let i=0;i<text.length;i+=1){
+    hash = ((hash << 5) - hash) + text.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
 }
 
 function escapeHtml(str){

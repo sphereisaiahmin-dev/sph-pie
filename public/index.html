@@ -129,6 +129,60 @@
         </div>
       </div>
       <p class="help">Lead sets up shows and manages exports. Operator logs entries against those shows.</p>
+      <div id="landingCalendar" class="calendar-panel" aria-live="polite">
+        <div class="calendar-panel-header">
+          <div>
+            <h3>Discipline calendar</h3>
+            <p id="calendarStatusText" class="help">Loading schedule…</p>
+          </div>
+          <div class="calendar-header-actions">
+            <div class="calendar-nav-group">
+              <button id="calendarToday" type="button" class="btn ghost small">Today</button>
+              <button id="calendarPrev" type="button" class="btn ghost small" aria-label="Previous period">←</button>
+              <button id="calendarNext" type="button" class="btn ghost small" aria-label="Next period">→</button>
+            </div>
+            <div id="calendarViewButtons" class="calendar-view-switch" role="group" aria-label="Calendar view">
+              <button type="button" class="btn ghost small is-active" data-calendar-view="month">Month</button>
+              <button type="button" class="btn ghost small" data-calendar-view="week">Week</button>
+              <button type="button" class="btn ghost small" data-calendar-view="day">Day</button>
+            </div>
+          </div>
+        </div>
+        <div class="calendar-toolbar-row">
+          <div class="calendar-date-label">
+            <strong id="calendarCurrentRange">—</strong>
+            <button id="calendarRetry" type="button" class="btn ghost small" hidden>Retry</button>
+          </div>
+          <label class="calendar-search">
+            <span class="sr-only">Search events</span>
+            <input type="search" id="calendarSearch" placeholder="Search events" />
+          </label>
+        </div>
+        <div id="calendarLayout" class="calendar-layout">
+          <div id="calendarViewport" class="calendar-viewport" role="grid"></div>
+          <aside id="calendarSidebar" class="calendar-sidebar">
+            <div class="calendar-day-header">
+              <h4 id="calendarDayTitle">Today's events</h4>
+              <p id="calendarDaySubtitle" class="help">Loading…</p>
+            </div>
+            <div id="calendarDayEvents" class="calendar-day-events"></div>
+            <div id="calendarDetail" class="calendar-detail" hidden>
+              <div class="calendar-detail-header">
+                <h4 id="calendarDetailTitle">Event details</h4>
+                <button id="calendarDetailClose" type="button" class="btn icon-btn" aria-label="Close event details">✖️</button>
+              </div>
+              <dl class="calendar-detail-list">
+                <dt>Date &amp; time</dt>
+                <dd id="calendarDetailTime">—</dd>
+                <dt>Location</dt>
+                <dd id="calendarDetailLocation">—</dd>
+                <dt>Description</dt>
+                <dd id="calendarDetailDescription">—</dd>
+              </dl>
+            </div>
+          </aside>
+        </div>
+      </div>
     </section>
 
     <section id="adminView" class="panel view-admin-only" aria-labelledby="adminTitle">

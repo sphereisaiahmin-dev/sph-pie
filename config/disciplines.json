@@ -1,0 +1,12 @@
+{
+  "roles": ["lead", "operator", "crew"],
+  "disciplines": [
+    {"id": "audio", "name": "Audio"},
+    {"id": "video", "name": "Video"},
+    {"id": "lighting", "name": "Lighting"},
+    {"id": "4d", "name": "4D"},
+    {"id": "drones", "name": "Drones", "default": true, "forms": true},
+    {"id": "show-control", "name": "Show Control"},
+    {"id": "broadcast", "name": "Broadcast"}
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "name": "production-information-environment",
+  "version": "1.0.0",
+  "description": "Production Information Environment web platform",
+  "main": "server/index.js",
+  "scripts": {
+    "test": "echo \"No automated tests configured\"",
+    "simulate:webhook": "node scripts/simulate-webhook.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.12.2",
+    "express": "^5.1.0",
+    "morgan": "^1.10.1",
+    "pg": "^8.13.1",
+    "sql.js": "^1.13.0",
+    "uuid": "^13.0.0"
+  }
+}

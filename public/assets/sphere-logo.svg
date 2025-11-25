@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="60" viewBox="0 0 220 60" role="img" aria-labelledby="title desc">
+  <title id="title">Sphere logo</title>
+  <desc id="desc">Gradient dome with the word sphere</desc>
+  <defs>
+    <linearGradient id="sphereGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#4dd3ff" />
+      <stop offset="55%" stop-color="#21a7d9" />
+      <stop offset="100%" stop-color="#0a4872" />
+    </linearGradient>
+    <linearGradient id="shineGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="rgba(255,255,255,.9)" />
+      <stop offset="70%" stop-color="rgba(255,255,255,0)" />
+    </linearGradient>
+    <clipPath id="domeClip">
+      <path d="M40 10c-16.568 0-30 13.432-30 30v4h60v-4c0-16.568-13.432-30-30-30z" />
+    </clipPath>
+  </defs>
+  <g clip-path="url(#domeClip)">
+    <rect x="10" y="10" width="60" height="40" fill="url(#sphereGradient)" rx="20" />
+    <rect x="10" y="10" width="60" height="24" fill="url(#shineGradient)" />
+  </g>
+  <path d="M10 40h60c0 6.627-13.432 12-30 12s-30-5.373-30-12z" fill="#0a1f30" opacity=".38" />
+  <text x="90" y="38" font-family="'Segoe UI','Inter','Helvetica Neue',sans-serif" font-size="26" font-weight="600" fill="#ffffff" letter-spacing="2">sphere</text>
+  <text x="164" y="25" font-family="'Segoe UI','Inter','Helvetica Neue',sans-serif" font-size="10" fill="#ffffff">™</text>
+</svg>

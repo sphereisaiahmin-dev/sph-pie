@@ -1,0 +1,516 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Production Information Environment</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="loginScreen" class="auth-view">
+    <div class="auth-card">
+      <img src="./assets/Sphere%20Logo_RGB%20_White.png" alt="Sphere" class="auth-logo" />
+      <h1>Sign in to Production Information Environment</h1>
+      <p class="help">Use your Sphere email address to continue.</p>
+      <form id="loginForm" class="auth-form">
+        <label for="loginEmail">Email</label>
+        <input id="loginEmail" type="email" autocomplete="username" required />
+        <label for="loginPassword">Password</label>
+        <input id="loginPassword" type="password" autocomplete="current-password" required />
+        <button type="submit" class="btn primary full">Sign in</button>
+        <div id="loginError" class="error" role="alert" hidden></div>
+      </form>
+    </div>
+  </div>
+  <div id="passwordResetScreen" class="auth-view" hidden>
+    <div class="auth-card">
+      <img src="./assets/Sphere%20Logo_RGB%20_White.png" alt="Sphere" class="auth-logo" />
+      <h1>Create a new password</h1>
+      <p class="help">Your temporary password has expired. Set a permanent password that meets the strength rules.</p>
+      <form id="passwordResetForm" class="auth-form">
+        <label for="resetCurrent">Current password</label>
+        <input id="resetCurrent" type="password" autocomplete="current-password" required />
+        <label for="resetNew">New password</label>
+        <input id="resetNew" type="password" autocomplete="new-password" required />
+        <label for="resetConfirm">Confirm new password</label>
+        <input id="resetConfirm" type="password" autocomplete="new-password" required />
+        <button type="submit" class="btn primary full">Update password</button>
+        <button type="button" id="passwordResetLogout" class="btn ghost full">Log out</button>
+        <div id="passwordResetError" class="error" role="alert" hidden></div>
+      </form>
+    </div>
+  </div>
+  <div id="appShell" class="app-shell" hidden>
+    <aside id="configPanel" class="config" role="dialog" aria-modal="true" aria-labelledby="configTitle" aria-hidden="true">
+      <div class="toolbar config-header">
+        <h2 id="configTitle">Workspace menu</h2>
+      </div>
+      <div class="config-session-card">
+        <div class="config-session-user">
+          <strong id="menuUserName">Not signed in</strong>
+          <span id="menuUserEmail"></span>
+          <span id="menuUserRoles" class="help"></span>
+        </div>
+        <div class="config-session-time">
+          <span class="help">Current time</span>
+          <strong id="menuDateTime"></strong>
+        </div>
+      </div>
+      <p class="help">Use the menu controls to confirm your session and jump into the admin workspace when authorized.</p>
+      <div class="config-actions row">
+        <div class="grow"></div>
+        <button type="button" id="cancelConfig" class="btn ghost">Close menu</button>
+      </div>
+      <div class="config-footer">
+        <button type="button" class="config-nav-btn" data-config-target="admin" id="adminWorkspaceNav">Admin workspace</button>
+      </div>
+    </aside>
+
+    <div id="appMain" class="app-main">
+      <div class="topbar" role="banner">
+        <div class="topbar-toolbar">
+          <button id="configBtn" class="btn icon-btn hamburger-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="configPanel" title="Toggle settings">
+            <span class="hamburger-icon" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+            </span>
+            <span class="sr-only">Toggle settings</span>
+          </button>
+          <div class="topbar-actions">
+          <button id="roleHome" class="btn ghost" type="button">← Choose discipline</button>
+            <div id="sessionUser" class="session-user" hidden>
+              <div class="session-user-text">
+                <strong id="sessionName"></strong>
+                <span id="sessionRoles"></span>
+              </div>
+              <button id="logoutBtn" class="btn ghost small" type="button">Logout</button>
+            </div>
+          </div>
+          <img src="./assets/Sphere%20Logo_RGB%20_White.png" alt="Sphere" class="app-logo" />
+          <div class="topbar-title">
+            <div id="welcomeBanner" class="welcome-banner" hidden></div>
+            <span id="viewBadge" class="view-badge">Lead workspace</span>
+            <div class="title-stack">
+              <h1 class="app-title">Production Information Environment</h1>
+              <span id="titleSub" class="title-sub">
+                <span id="titleSubPrefix">Tracking</span>
+                <span id="appTitle">Drone</span>
+                <span id="titleSubSuffix">activity</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="container" role="main">
+    <section id="disciplineView" class="panel landing-panel view-discipline-only" aria-labelledby="disciplineTitle">
+      <h2 id="disciplineTitle">Choose discipline</h2>
+      <p class="lead">Select the production discipline you want to manage.</p>
+      <div id="disciplineList" class="discipline-options" role="list"></div>
+    </section>
+
+    <section id="workspaceView" class="panel landing-panel view-workspace-only" aria-labelledby="workspaceTitle">
+      <h2 id="workspaceTitle">Choose your workspace</h2>
+      <p id="workspaceMessage" class="lead">Workspaces for this discipline are coming soon.</p>
+      <div id="workspaceList" class="role-options" role="list"></div>
+    </section>
+
+    <section id="landingView" class="panel landing-panel view-landing-only" aria-labelledby="landingTitle">
+      <h2 id="landingTitle">Choose workspace</h2>
+      <p id="landingSubtitle" class="lead">Select the role you need for this session.</p>
+      <div class="role-options">
+        <div class="role-options-main">
+          <button id="chooseLead" type="button" class="btn primary role-btn">Lead</button>
+          <button id="chooseOperator" type="button" class="btn primary role-btn">Operator</button>
+        </div>
+        <div class="role-options-archive">
+          <button id="chooseArchive" type="button" class="btn primary role-btn">Archive</button>
+        </div>
+      </div>
+      <p class="help">Lead sets up shows and manages exports. Operator logs entries against those shows.</p>
+    </section>
+
+    <section id="adminView" class="panel view-admin-only" aria-labelledby="adminTitle">
+      <div class="panel-header">
+        <h2 id="adminTitle">Admin workspace</h2>
+        <div class="panel-actions">
+          <p class="help">Manage accounts, unit labels, and integrations.</p>
+        </div>
+      </div>
+      <form id="configForm" class="config-form">
+        <section class="config-section grid is-active" data-config-section="admin">
+          <div class="col-12 admin-users-panel">
+            <div class="admin-users-header">
+              <div>
+                <h3 id="userAccountsTitle">User accounts</h3>
+                <p class="help">Admins manage the roster here. Workspace lists automatically sync to assigned roles.</p>
+              </div>
+              <div class="admin-users-actions">
+                <button type="button" id="newUserBtn" class="btn ghost">Add user</button>
+              </div>
+            </div>
+            <div class="user-directory-controls">
+              <label class="sr-only" for="userSearch">Search users</label>
+              <input type="search" id="userSearch" placeholder="Search name or email" />
+              <label class="sr-only" for="userRoleFilter">Filter by role</label>
+              <select id="userRoleFilter">
+                <option value="">All roles</option>
+              </select>
+            </div>
+            <div id="userDirectory" class="user-directory" aria-live="polite"></div>
+          </div>
+          <div class="col-12">
+            <label for="unitLabelSelect">Unit label</label>
+            <select id="unitLabelSelect" name="unitLabel">
+              <option value="Drone">Drone</option>
+            <option value="Crew">Crew</option>
+            </select>
+            <p class="help">Controls how units are referenced across the UI.</p>
+          </div>
+          <fieldset class="col-12 provider-fields data-tools">
+            <legend>Data tools</legend>
+            <p class="help">Refresh the show list to pull the latest records.</p>
+            <button id="refreshShows" type="button" class="btn ghost">Refresh data</button>
+          </fieldset>
+          <fieldset id="webhookFields" class="col-12 provider-fields">
+            <legend>Webhook export</legend>
+            <label class="switch">
+              <input id="webhookEnabled" type="checkbox" />
+              <span>Enable per-entry webhook dispatch</span>
+            </label>
+            <p class="help">Send each recorded entry to an external endpoint using the same columns as the CSV export.</p>
+            <button id="webhookConfigure" type="button" class="btn ghost" hidden>Config webhook</button>
+            <button id="webhookSimulateMonth" type="button" class="btn ghost">Simulate month delivery</button>
+            <p class="help small">Replay the most recent month of shows to the webhook for validation.</p>
+          </fieldset>
+        </section>
+        <div class="config-actions row">
+          <div class="grow"></div>
+          <button type="submit" class="btn primary">Save settings</button>
+        </div>
+        <div class="config-status">
+          <div id="configMessage" role="status" aria-live="polite" class="help"></div>
+        </div>
+      </form>
+    </section>
+
+    <section id="archiveView" class="panel view-archive-only" aria-labelledby="archiveTitle">
+      <div class="panel-header">
+        <h2 id="archiveTitle">Archived shows</h2>
+        <div class="panel-actions">
+          <button id="refreshArchive" type="button" class="btn ghost">Refresh archive</button>
+        </div>
+      </div>
+      <div class="grid archive-grid">
+        <div class="col-4">
+          <label for="archiveShowSelect">Archived show</label>
+          <select id="archiveShowSelect"></select>
+          <p id="archiveMeta" class="help"></p>
+          <section id="archiveStats" class="archive-stats" aria-live="polite"></section>
+        </div>
+        <div class="col-8">
+          <div id="archiveDetails" class="archive-details"></div>
+          <div id="archiveEmpty" class="help">No archived shows yet. Shows are moved here 12 hours after creation and remain available for two months.</div>
+          <div class="archive-actions row">
+            <button id="archiveExportCsv" type="button" class="btn ghost" disabled>Export CSV</button>
+            <button id="archiveExportJson" type="button" class="btn ghost" disabled>Export JSON</button>
+          </div>
+        </div>
+      </div>
+      <div class="archive-analytics" aria-live="polite">
+        <div class="archive-analytics-header">
+          <h3>Archive analytics</h3>
+          <p class="help">Graph show statistics over time to spot trends.</p>
+        </div>
+        <div class="archive-analytics-controls">
+          <div class="control-group">
+            <span class="control-label">Metrics</span>
+            <div id="archiveMetricButtons" class="metric-toggle-grid" role="group" aria-label="Archive metrics"></div>
+            <p id="archiveMetricHelp" class="help small">Toggle metrics to visualise together.</p>
+          </div>
+          <div class="control-group">
+            <span class="control-label">Primary issues</span>
+            <div id="archiveIssueButtons" class="metric-toggle-grid" role="group" aria-label="Primary issue metrics"></div>
+            <p class="help small">Add issue frequency metrics to the chart.</p>
+          </div>
+          <div class="control-group control-group-mode">
+            <span class="control-label">Populate graph by</span>
+            <div class="mode-toggle" role="group" aria-label="Show selection mode">
+              <button id="archiveModeCalendar" type="button" class="btn toggle-btn is-active" data-archive-mode="calendar">Calendar range</button>
+              <button id="archiveModeShows" type="button" class="btn toggle-btn" data-archive-mode="shows">Show picker</button>
+            </div>
+            <p class="help small">Choose how the show list feeds the chart.</p>
+          </div>
+          <div id="archiveModeControls" class="control-group"></div>
+        </div>
+        <div class="archive-chart-wrap">
+          <div class="archive-chart-panel">
+            <div class="archive-chart-filter control-group control-group-inline">
+              <label for="archiveOperatorFilter">Operator</label>
+              <select id="archiveOperatorFilter">
+                <option value="">All operators</option>
+              </select>
+            </div>
+            <canvas id="archiveStatCanvas" class="archive-chart" role="img" aria-label="Archived show statistic over time"></canvas>
+          </div>
+          <p id="archiveStatEmpty" class="help">Select one or more shows and metrics to render the chart.</p>
+          <div id="archiveDayDetail" class="archive-day-detail" hidden>
+            <div class="archive-day-detail-card" role="dialog" aria-labelledby="archiveDayDetailTitle">
+              <div class="archive-day-detail-header">
+                <h4 id="archiveDayDetailTitle">Day breakdown</h4>
+                <button id="closeArchiveDayDetail" type="button" class="btn icon-btn" aria-label="Close day breakdown">✖️</button>
+              </div>
+              <div id="archiveDayDetailContent" class="archive-day-detail-content"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel view-lead-only" aria-labelledby="showHeaderTitle">
+      <div class="panel-header">
+        <h2 id="showHeaderTitle">Show header</h2>
+        <div class="panel-actions">
+          <button id="newShow" class="btn primary">Add show</button>
+        </div>
+      </div>
+      <div class="grid">
+        <div class="col-3">
+          <label for="showDate">Date</label>
+          <input id="showDate" type="date" autocomplete="off" required />
+        </div>
+        <div class="col-3">
+          <label for="showTime">Show start time</label>
+          <input id="showTime" type="time" required />
+        </div>
+        <div class="col-6">
+          <label for="showLabel">Show label or number</label>
+          <input id="showLabel" type="text" placeholder="e.g., 7pm Main" required />
+        </div>
+        <div class="col-6">
+          <label for="leadPilot">Lead</label>
+          <select id="leadPilot" required></select>
+        </div>
+        <div class="col-6">
+          <label for="monkeyLead">Crew Lead</label>
+          <select id="monkeyLead" required></select>
+        </div>
+        <div class="col-12">
+          <label for="showNotes">Notes for the show</label>
+          <textarea id="showNotes" placeholder="High-level notes"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel view-operator-only" aria-labelledby="entryTitle">
+      <h2 id="entryTitle">Entry form</h2>
+      <div class="grid" id="entryForm">
+        <div class="col-12">
+          <label for="entryShowSelect">Assign to show</label>
+          <select id="entryShowSelect"></select>
+          <div id="operatorShowSummary" class="help">Select a show to start logging entries.</div>
+        </div>
+        <div class="col-2">
+          <label for="unitId"><span id="unitLabel">Drone</span> ID</label>
+          <select id="unitId"></select>
+          <div class="error" id="errUnit" hidden>Required</div>
+        </div>
+        <div class="col-2">
+          <label for="planned">Planned to fly</label>
+          <select id="planned">
+            <option value="">Select</option>
+            <option>Yes</option>
+            <option>No</option>
+          </select>
+          <div class="error" id="errPlanned" hidden>Required</div>
+        </div>
+        <div class="col-2">
+          <label for="launched">Launched</label>
+          <select id="launched">
+            <option value="">Select</option>
+            <option>Yes</option>
+            <option>No</option>
+          </select>
+          <div class="error" id="errLaunched" hidden>Required</div>
+        </div>
+        <div class="col-4">
+          <label>Status</label>
+          <div class="pills" role="group" aria-label="Status">
+            <button type="button" class="pill completed" id="stCompleted" data-status="Completed" aria-pressed="false"><span class="status-dot dot-success"></span>Completed</button>
+            <button type="button" class="pill nolaunch" id="stNoLaunch" data-status="No-launch" aria-pressed="false"><span class="status-dot dot-danger"></span>No-launch</button>
+            <button type="button" class="pill abort" id="stAbort" data-status="Abort" aria-pressed="false"><span class="status-dot dot-warn"></span>Abort</button>
+          </div>
+          <div class="error" id="errStatus" hidden>Required</div>
+        </div>
+        <div class="col-4 issue-block hidden">
+          <label for="primaryIssue">Primary issue</label>
+          <select id="primaryIssue"></select>
+          <div class="error" id="errPrimary" hidden>Required</div>
+        </div>
+        <div class="col-4 issue-block hidden">
+          <label for="subIssue">Sub-issue</label>
+          <select id="subIssue"></select>
+        </div>
+        <div class="col-4 issue-block hidden" id="otherDetailWrap">
+          <label for="otherDetail">Other detail</label>
+          <input id="otherDetail" type="text" placeholder="Short detail" />
+          <div class="error" id="errOther" hidden>Required</div>
+        </div>
+        <div class="col-4 issue-block hidden">
+          <label for="severity">Severity</label>
+          <select id="severity">
+            <option value="">Select</option>
+            <option>Critical show stop</option>
+            <option>Major visible</option>
+            <option>Minor contained</option>
+          </select>
+          <div class="error" id="errSeverity" hidden>Required</div>
+        </div>
+        <div class="col-4 issue-block hidden">
+          <label for="rootCause">Root cause draft</label>
+          <select id="rootCause">
+            <option value="">Select</option>
+            <option>Hardware</option>
+            <option>Software</option>
+            <option>Ops</option>
+            <option>Environment</option>
+            <option>Unknown</option>
+          </select>
+        </div>
+        <div class="col-12 issue-block hidden">
+          <label>Actions taken</label>
+          <div class="actions-chips" id="actionsChips" role="group" aria-label="Actions taken"></div>
+        </div>
+        <div class="col-3">
+          <label for="operatorDisplay">Operator</label>
+          <input id="operatorDisplay" type="text" class="operator-display" readonly tabindex="-1" aria-readonly="true" placeholder="Sign in to log entries" />
+          <input type="hidden" id="operator" />
+          <div class="error" id="errOperator" hidden>Required</div>
+        </div>
+        <div class="col-3">
+          <label for="batteryId">Battery ID</label>
+          <input id="batteryId" type="text" placeholder="e.g., B-12" />
+        </div>
+        <div class="col-3">
+          <label for="delaySec">Launch delay seconds</label>
+          <input id="delaySec" type="number" step="0.1" min="0" placeholder="0.0" />
+          <div class="error" id="errDelay" hidden>Must be a non-negative number</div>
+        </div>
+        <div class="col-3">
+          <label for="commandRx">Command received</label>
+          <select id="commandRx">
+            <option value="">Select</option>
+            <option>Yes</option>
+            <option>No</option>
+          </select>
+        </div>
+        <div class="col-12">
+          <label for="entryNotes">Notes</label>
+          <textarea id="entryNotes" placeholder="Short note"></textarea>
+        </div>
+        <div class="col-12">
+          <p id="operatorEntryNotice" class="operator-entry-notice" hidden></p>
+        </div>
+        <div class="col-12 entry-actions">
+          <button id="addLine" class="btn primary">Add line</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="groups" class="view-lead-only"></section>
+  </div>
+  </div>
+</div>
+
+  <div id="userModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="userModalTitle" aria-hidden="true">
+    <div class="modal user-modal">
+      <div class="toolbar modal-toolbar">
+        <h2 id="userModalTitle">User account</h2>
+        <button type="button" id="closeUserModal" class="btn icon-btn" title="Close user editor">✖️</button>
+      </div>
+      <form id="userForm" class="user-form" role="form" aria-labelledby="userModalTitle">
+        <input type="hidden" id="userId" />
+        <div class="grid">
+          <div class="col-6">
+            <label for="userName">Name</label>
+            <input id="userName" type="text" required />
+          </div>
+          <div class="col-6">
+            <label for="userEmail">Email</label>
+            <input id="userEmail" type="email" required />
+          </div>
+          <fieldset class="col-12 role-checkboxes">
+            <legend>Roles</legend>
+            <div id="userRoleGrid" class="user-role-grid"></div>
+          </fieldset>
+        </div>
+        <div class="row form-actions">
+          <button type="button" id="userFormCancel" class="btn ghost">Cancel</button>
+          <button type="button" id="userFormSubmit" class="btn primary">Save user</button>
+        </div>
+        <p class="help small">New accounts receive the temporary password <code>adminsphere1</code> and must update it on first login.</p>
+        <div id="userFormStatus" class="help" role="status"></div>
+      </form>
+    </div>
+  </div>
+
+  <div id="webhookModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="webhookModalTitle" aria-hidden="true">
+    <div class="modal">
+      <div class="toolbar">
+        <h2 id="webhookModalTitle">Webhook settings</h2>
+        <button id="closeWebhookModal" class="btn icon-btn" title="Close webhook settings">✖️</button>
+      </div>
+      <form id="webhookForm" class="grid">
+        <div class="col-12">
+          <label for="webhookUrl">Webhook URL</label>
+          <input id="webhookUrl" type="url" autocomplete="off" placeholder="https://example.com/webhook" />
+        </div>
+        <div class="col-4">
+          <label for="webhookMethod">HTTP method</label>
+          <select id="webhookMethod">
+            <option>POST</option>
+            <option>PUT</option>
+          </select>
+        </div>
+        <div class="col-8">
+          <label for="webhookSecret">Bearer token (Authorization header)</label>
+          <input id="webhookSecret" type="text" autocomplete="off" placeholder="Sent as Authorization: Bearer …" />
+        </div>
+        <div class="col-12">
+          <label for="webhookHeaders">Additional headers (optional)</label>
+          <textarea id="webhookHeaders" placeholder="One per line, e.g., Authorization: Bearer token"></textarea>
+        </div>
+        <div class="col-12">
+          <div id="webhookPreview" class="webhook-preview" aria-live="polite"></div>
+        </div>
+      </form>
+      <div class="sep"></div>
+      <div class="row" style="justify-content:flex-end;gap:10px;">
+        <button type="button" id="webhookCancel" class="btn ghost">Cancel</button>
+        <button type="submit" form="webhookForm" id="webhookSave" class="btn primary">Save webhook settings</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="editModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="editTitle">
+    <div class="modal">
+      <div class="toolbar">
+        <h2 id="editTitle">Edit entry</h2>
+        <button id="closeEdit" class="btn icon-btn" title="Close edit">✖️</button>
+      </div>
+      <form id="editForm" class="grid"></form>
+      <div class="sep"></div>
+      <div class="row" style="justify-content:flex-end;gap:10px;">
+        <button type="button" id="saveEdit" class="btn primary">Save changes</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="./app.js" type="module"></script>
+</body>
+</html>

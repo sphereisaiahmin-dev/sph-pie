@@ -105,7 +105,8 @@ function createEmptyShowDraft(){
     label: '',
     leadPilot: '',
     monkeyLead: '',
-    notes: ''
+    notes: '',
+    disciplineId: getActiveDisciplineId()
   };
 }
 
@@ -132,12 +133,17 @@ const state = {
   archiveChartFilters: {
     startDate: null,
     endDate: null,
-    operator: null
+    operator: null,
+    discipline: ''
   },
   archiveSelectionMode: 'calendar',
   archiveDailyGroups: [],
   archiveDailyGroupsByKey: {},
   activeArchiveDayKey: null,
+  calendarEvents: [],
+  calendarMonth: null,
+  activeCalendarDayKey: null,
+  calendarLoaded: false,
   webhookConfig: {
     enabled: false,
     url: '',
@@ -290,9 +296,11 @@ const webhookCancelBtn = el('webhookCancel');
 const roleHomeBtn = el('roleHome');
 const viewBadge = el('viewBadge');
 const welcomeBanner = el('welcomeBanner');
+const landingDisciplineShortcuts = el('landingDisciplineShortcuts');
 const chooseLeadBtn = el('chooseLead');
 const chooseOperatorBtn = el('chooseOperator');
 const chooseArchiveBtn = el('chooseArchive');
+const openCalendarBtn = el('openCalendar');
 const entryShowSelect = el('entryShowSelect');
 const operatorShowSummary = el('operatorShowSummary');
 const archiveShowSelect = el('archiveShowSelect');
@@ -321,11 +329,22 @@ const archiveDayDetailContent = el('archiveDayDetailContent');
 let archiveDayDetailCloseTimer = null;
 const closeArchiveDayDetailBtn = el('closeArchiveDayDetail');
 const refreshArchiveBtn = el('refreshArchive');
+const archiveDisciplineFilter = el('archiveDisciplineFilter');
 const connectionStatusEl = el('connectionStatus');
 const providerBadge = el('providerBadge');
 const webhookBadge = el('webhookBadge');
 const refreshShowsBtn = el('refreshShows');
 const lanAddressEl = el('lanAddress');
+const calendarView = el('calendarView');
+const calendarGrid = el('calendarGrid');
+const calendarMonthLabel = el('calendarMonthLabel');
+const calendarDayDetails = el('calendarDayDetails');
+const calendarDayTitle = el('calendarDayTitle');
+const calendarDaySubtitle = el('calendarDaySubtitle');
+const calendarEventList = el('calendarEventList');
+const calendarPrevBtn = el('calendarPrev');
+const calendarNextBtn = el('calendarNext');
+const calendarRefreshBtn = el('calendarRefresh');
 
 let currentConfigSection = 'admin';
 let webhookModalSnapshot = null;
@@ -361,6 +380,8 @@ async function init(){
     state.users = [];
   }
   await loadShows();
+  state.calendarMonth = state.calendarMonth || getMonthStart(new Date());
+  state.activeCalendarDayKey = state.activeCalendarDayKey || formatDayKey(new Date());
   initUI();
   setupSyncChannel();
   populateUnitOptions();
@@ -409,6 +430,9 @@ function initAuthUI(){
   }
   if(disciplineList){
     disciplineList.addEventListener('click', onDisciplineListClick);
+  }
+  if(landingDisciplineShortcuts){
+    landingDisciplineShortcuts.addEventListener('click', onDisciplineListClick);
   }
   setupIdleActivityTracking();
   setupUnloadLogoutHandler();
@@ -1082,6 +1106,15 @@ function initUI(){
       openArchiveWorkspace();
     });
   }
+  if(openCalendarBtn){
+    openCalendarBtn.addEventListener('click', ()=>{
+      if(!userHasRole('lead') && !userHasRole('operator') && !userHasRole('crew')){
+        toast('Calendar requires a workspace role', true);
+        return;
+      }
+      openCalendarWorkspace();
+    });
+  }
   if(archiveShowSelect){
     archiveShowSelect.addEventListener('change', ()=>{
       setCurrentArchivedShow(archiveShowSelect.value || null);
@@ -1104,6 +1137,9 @@ function initUI(){
   }
   if(archiveModeShowsBtn){
     archiveModeShowsBtn.addEventListener('click', ()=> setArchiveSelectionMode('shows'));
+  }
+  if(archiveDisciplineFilter){
+    archiveDisciplineFilter.addEventListener('change', onArchiveDisciplineFilterChange);
   }
   if(archiveOperatorFilter){
     archiveOperatorFilter.addEventListener('change', onArchiveOperatorFilterChange);
@@ -1234,6 +1270,19 @@ function initUI(){
   if(refreshArchiveBtn){
     refreshArchiveBtn.dataset.label = refreshArchiveBtn.textContent;
     refreshArchiveBtn.addEventListener('click', onRefreshArchiveList);
+  }
+  if(calendarPrevBtn){
+    calendarPrevBtn.addEventListener('click', ()=> changeCalendarMonth(-1));
+  }
+  if(calendarNextBtn){
+    calendarNextBtn.addEventListener('click', ()=> changeCalendarMonth(1));
+  }
+  if(calendarGrid){
+    calendarGrid.addEventListener('click', onCalendarGridClick);
+  }
+  if(calendarRefreshBtn){
+    calendarRefreshBtn.dataset.label = calendarRefreshBtn.textContent;
+    calendarRefreshBtn.addEventListener('click', ()=> loadCalendarEvents({force: true}));
   }
 
   document.addEventListener('click', event=>{
@@ -1419,12 +1468,9 @@ function updateDisciplineHeader(){
 }
 
 function renderDisciplineOptions(){
-  if(!disciplineList){
-    return;
-  }
   const options = state.disciplines.length ? state.disciplines : [{id: 'drones', name: 'Drones', forms: true}];
   const activeId = getActiveDisciplineId();
-  disciplineList.innerHTML = options.map(option =>{
+  const markup = options.map(option =>{
     const isActive = option.id === activeId;
     const classes = ['btn', 'primary', 'role-btn'];
     if(isActive){
@@ -1433,6 +1479,12 @@ function renderDisciplineOptions(){
     const label = escapeHtml(option.name || getDisciplineDisplayName(option.id));
     return `<button type="button" class="${classes.join(' ')}" data-discipline-id="${escapeHtml(option.id)}" aria-pressed="${isActive ? 'true' : 'false'}">${label}</button>`;
   }).join('');
+  if(disciplineList){
+    disciplineList.innerHTML = markup;
+  }
+  if(landingDisciplineShortcuts){
+    landingDisciplineShortcuts.innerHTML = markup;
+  }
 }
 
 function onDisciplineListClick(event){
@@ -1546,7 +1598,7 @@ async function loadShows(){
     state.storageMeta = storageMeta || (typeof data.storage === 'string' ? {label: data.storage} : state.storageMeta);
     state.storageLabel = resolveStorageLabel(state.storageMeta || data.storage || state.storageLabel);
     state.webhookStatus = normalizeWebhookStatus(data.webhook, state.webhookConfig);
-    state.shows = Array.isArray(data.shows) ? data.shows : [];
+    state.shows = Array.isArray(data.shows) ? data.shows.map(normalizeActiveShow) : [];
     sortShows();
     const fallbackId = state.shows[0]?.id || null;
     state.currentShowId = previousId && state.shows.some(show=>show.id===previousId) ? previousId : fallbackId;
@@ -1568,6 +1620,18 @@ async function openArchiveWorkspace(){
   await loadArchivedShows({silent: true, preserveSelection: true});
 }
 
+async function openCalendarWorkspace(){
+  setView('calendar');
+  if(!state.calendarMonth){
+    state.calendarMonth = getMonthStart(new Date());
+  }
+  if(!state.activeCalendarDayKey){
+    state.activeCalendarDayKey = formatDayKey(new Date());
+  }
+  await loadCalendarEvents({force: !state.calendarLoaded});
+  renderCalendar();
+}
+
 async function loadArchivedShows(options = {}){
   const {silent = false, preserveSelection = false} = options;
   try{
@@ -1585,6 +1649,7 @@ async function loadArchivedShows(options = {}){
       state.currentArchivedShowId = state.archivedShows[0]?.id || null;
     }
     renderArchiveSelect();
+    renderArchiveDisciplineFilter();
     renderArchiveChartControls();
     renderArchiveChart();
     return true;
@@ -1598,10 +1663,38 @@ async function loadArchivedShows(options = {}){
       state.currentArchivedShowId = null;
       state.selectedArchiveChartShows = [];
       renderArchiveSelect();
+      renderArchiveDisciplineFilter();
       renderArchiveChartControls();
       renderArchiveChart();
     }
     return false;
+  }
+}
+
+async function loadCalendarEvents(options = {}){
+  const {force = false} = options;
+  if(state.calendarLoaded && !force){
+    renderCalendar();
+    return;
+  }
+  if(calendarRefreshBtn){
+    calendarRefreshBtn.disabled = true;
+    calendarRefreshBtn.textContent = 'Syncing…';
+  }
+  try{
+    const data = await apiRequest('/api/calendar');
+    const events = Array.isArray(data?.events) ? data.events.map(normalizeCalendarEvent) : [];
+    state.calendarEvents = events.filter(event => Number.isFinite(event.startTs));
+    state.calendarLoaded = true;
+    renderCalendar();
+  }catch(err){
+    console.error('Failed to load calendar', err);
+    toast('Failed to load calendar feed', true);
+  }finally{
+    if(calendarRefreshBtn){
+      calendarRefreshBtn.disabled = false;
+      calendarRefreshBtn.textContent = calendarRefreshBtn.dataset.label || 'Refresh calendar';
+    }
   }
 }
 
@@ -1896,12 +1989,15 @@ function renderArchiveSelect(){
   if(!archiveShowSelect){
     return;
   }
-  const shows = Array.isArray(state.archivedShows) ? state.archivedShows : [];
+  const shows = getFilteredArchivedShows(state.archivedShows, {includeDateFilter: false, includeOperatorFilter: false});
   if(!shows.length){
     archiveShowSelect.innerHTML = '<option value="">No archived shows</option>';
     archiveShowSelect.disabled = true;
     if(archiveMeta){
-      archiveMeta.textContent = 'Shows archive will populate once daily records are archived.';
+      const totalShows = Array.isArray(state.archivedShows) ? state.archivedShows.length : 0;
+      archiveMeta.textContent = totalShows
+        ? 'No archived shows for this discipline yet.'
+        : 'Shows archive will populate once daily records are archived.';
     }
     renderArchiveStats(null);
     renderArchiveDetails(null);
@@ -1923,14 +2019,39 @@ function renderArchiveSelect(){
   setCurrentArchivedShow(selectedId, {skipSelectUpdate: true});
 }
 
+function renderArchiveDisciplineFilter(){
+  if(!archiveDisciplineFilter){
+    return;
+  }
+  const options = state.disciplines.length ? state.disciplines : [{id: 'drones', name: 'Drones'}];
+  const currentRaw = state.archiveChartFilters?.discipline;
+  const current = typeof currentRaw === 'string' ? currentRaw.toLowerCase() : '';
+  const optionMarkup = ['<option value="">All disciplines</option>']
+    .concat(options.map(option => `<option value="${escapeHtml(option.id)}">${escapeHtml(option.name)}</option>`))
+    .join('');
+  archiveDisciplineFilter.innerHTML = optionMarkup;
+  const match = options.find(option => option.id === current);
+  const shouldFallback = currentRaw === undefined || currentRaw === null;
+  const fallback = shouldFallback && getActiveDisciplineId() ? getActiveDisciplineId() : '';
+  const nextValue = match
+    ? match.id
+    : (fallback && options.some(option => option.id === fallback) ? fallback : (current || ''));
+  archiveDisciplineFilter.value = nextValue;
+  state.archiveChartFilters.discipline = nextValue;
+}
+
 function setCurrentArchivedShow(showId, options = {}){
   const {skipSelectUpdate = false} = options;
-  state.currentArchivedShowId = showId || null;
+  const availableShows = getFilteredArchivedShows(state.archivedShows, {includeDateFilter: false, includeOperatorFilter: false});
+  const preferredId = showId && availableShows.some(show => show.id === showId)
+    ? showId
+    : (availableShows[0]?.id || null);
+  state.currentArchivedShowId = preferredId;
   if(!skipSelectUpdate && archiveShowSelect){
-    if(showId && state.archivedShows.some(show=>show.id === showId)){
-      archiveShowSelect.value = showId;
-    }else if(state.archivedShows[0]){
-      archiveShowSelect.value = state.archivedShows[0].id;
+    if(preferredId){
+      archiveShowSelect.value = preferredId;
+    }else if(availableShows[0]){
+      archiveShowSelect.value = availableShows[0].id;
     }else{
       archiveShowSelect.value = '';
     }
@@ -2079,9 +2200,10 @@ function renderArchiveChartControls(){
   renderArchiveSelectionMode();
   const shows = Array.isArray(state.archivedShows) ? state.archivedShows : [];
   const filters = typeof state.archiveChartFilters === 'object' && state.archiveChartFilters
-    ? Object.assign({startDate: null, endDate: null, operator: null}, state.archiveChartFilters)
-    : {startDate: null, endDate: null, operator: null};
+    ? Object.assign({startDate: null, endDate: null, operator: null, discipline: ''}, state.archiveChartFilters)
+    : {startDate: null, endDate: null, operator: null, discipline: ''};
   state.archiveChartFilters = filters;
+  renderArchiveDisciplineFilter();
   if(archiveShowFilterStart){
     archiveShowFilterStart.value = filters.startDate || '';
   }
@@ -2541,7 +2663,7 @@ function onArchiveDateFilterChange(field, value){
     return;
   }
   if(!state.archiveChartFilters || typeof state.archiveChartFilters !== 'object'){
-    state.archiveChartFilters = {startDate: null, endDate: null, operator: null};
+    state.archiveChartFilters = {startDate: null, endDate: null, operator: null, discipline: ''};
   }
   state.archiveChartFilters[field] = value || null;
   renderArchiveChartControls();
@@ -2550,11 +2672,27 @@ function onArchiveDateFilterChange(field, value){
 
 function onArchiveOperatorFilterChange(){
   if(!state.archiveChartFilters || typeof state.archiveChartFilters !== 'object'){
-    state.archiveChartFilters = {startDate: null, endDate: null, operator: null};
+    state.archiveChartFilters = {startDate: null, endDate: null, operator: null, discipline: ''};
   }
   const value = archiveOperatorFilter?.value || '';
   state.archiveChartFilters.operator = value || null;
   closeArchiveDayDetail();
+  renderArchiveChartControls();
+  renderArchiveChart();
+}
+
+function onArchiveDisciplineFilterChange(){
+  if(!state.archiveChartFilters || typeof state.archiveChartFilters !== 'object'){
+    state.archiveChartFilters = {startDate: null, endDate: null, operator: null, discipline: ''};
+  }
+  const value = archiveDisciplineFilter?.value || '';
+  state.archiveChartFilters.discipline = value.trim().toLowerCase();
+  const filtered = getFilteredArchivedShows(state.archivedShows, {includeDateFilter: false, includeOperatorFilter: false});
+  if(!filtered.some(show => show.id === state.currentArchivedShowId)){
+    state.currentArchivedShowId = filtered[0]?.id || null;
+  }
+  closeArchiveDayDetail();
+  renderArchiveSelect();
   renderArchiveChartControls();
   renderArchiveChart();
 }
@@ -2618,11 +2756,15 @@ function getFilteredArchivedShows(shows = state.archivedShows, options = {}){
   const filters = state.archiveChartFilters || {};
   const includeDateFilter = options.includeDateFilter !== false;
   const includeOperatorFilter = options.includeOperatorFilter !== false;
+  const includeDisciplineFilter = options.includeDisciplineFilter !== false;
   const startTs = includeDateFilter ? parseFilterDate(filters.startDate, false) : null;
   const endTs = includeDateFilter ? parseFilterDate(filters.endDate, true) : null;
   const operatorFilter = includeOperatorFilter && typeof filters.operator === 'string' && filters.operator
     ? filters.operator.toLowerCase()
     : null;
+  const disciplineFilter = includeDisciplineFilter && typeof filters.discipline === 'string' && filters.discipline
+    ? filters.discipline.toLowerCase()
+    : '';
   return list.filter(show => {
     const timestamp = getShowTimestamp(show);
     if(timestamp === null){
@@ -2634,6 +2776,12 @@ function getFilteredArchivedShows(shows = state.archivedShows, options = {}){
     if(includeDateFilter && endTs !== null && timestamp > endTs){
       return false;
     }
+    if(disciplineFilter){
+      const showDiscipline = typeof show.disciplineId === 'string' ? show.disciplineId.trim().toLowerCase() : '';
+      if(showDiscipline !== disciplineFilter){
+        return false;
+      }
+    }
     if(operatorFilter){
       if(!showIncludesOperator(show, operatorFilter)){
         return false;
@@ -2641,6 +2789,188 @@ function getFilteredArchivedShows(shows = state.archivedShows, options = {}){
     }
     return true;
   });
+}
+
+function getCalendarMonthStart(){
+  const month = state.calendarMonth instanceof Date ? state.calendarMonth : new Date();
+  return getMonthStart(month);
+}
+
+function getMonthStart(value){
+  const date = value instanceof Date ? new Date(value) : new Date();
+  date.setHours(0,0,0,0);
+  date.setDate(1);
+  return date;
+}
+
+function formatDayKey(value){
+  if(value instanceof Date){
+    const iso = value.toISOString();
+    return iso.slice(0, 10);
+  }
+  if(typeof value === 'string'){
+    return value.slice(0, 10);
+  }
+  return '';
+}
+
+function parseDayKey(key){
+  if(!key){
+    return null;
+  }
+  const date = new Date(key);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function changeCalendarMonth(delta){
+  const start = getCalendarMonthStart();
+  start.setMonth(start.getMonth() + delta);
+  state.calendarMonth = start;
+  const activeDate = parseDayKey(state.activeCalendarDayKey) || new Date();
+  if(activeDate.getMonth() !== start.getMonth() || activeDate.getFullYear() !== start.getFullYear()){
+    const nextDate = new Date(start);
+    nextDate.setDate(Math.min(activeDate.getDate() || 1, daysInMonth(start)));
+    state.activeCalendarDayKey = formatDayKey(nextDate);
+  }
+  renderCalendar();
+}
+
+function daysInMonth(date){
+  const working = date instanceof Date ? new Date(date) : new Date();
+  return new Date(working.getFullYear(), working.getMonth() + 1, 0).getDate();
+}
+
+function buildCalendarDayMap(events = state.calendarEvents){
+  const map = new Map();
+  (Array.isArray(events) ? events : []).forEach(event => {
+    const key = event.dayKey || formatDayKey(event.startDate || event.start);
+    if(!key){
+      return;
+    }
+    if(!map.has(key)){
+      map.set(key, []);
+    }
+    map.get(key).push(event);
+  });
+  map.forEach(list => list.sort((a, b)=> (a.startTs || 0) - (b.startTs || 0)));
+  return map;
+}
+
+function renderCalendar(){
+  if(!calendarGrid){
+    return;
+  }
+  const monthStart = getCalendarMonthStart();
+  state.calendarMonth = monthStart;
+  const todayKey = formatDayKey(new Date());
+  const activeDay = state.activeCalendarDayKey || todayKey;
+  if(calendarMonthLabel){
+    calendarMonthLabel.textContent = monthStart.toLocaleDateString(undefined, {month: 'long', year: 'numeric'});
+  }
+  const dayMap = buildCalendarDayMap();
+  const firstDay = new Date(monthStart);
+  const leading = firstDay.getDay();
+  const totalDays = daysInMonth(monthStart);
+  const cells = [];
+  for(let i = 0; i < leading; i += 1){
+    cells.push('<div class="calendar-cell is-empty" aria-hidden="true"></div>');
+  }
+  for(let day = 1; day <= totalDays; day += 1){
+    const currentDate = new Date(monthStart);
+    currentDate.setDate(day);
+    const key = formatDayKey(currentDate);
+    const events = dayMap.get(key) || [];
+    const isToday = key === todayKey;
+    const isActive = key === activeDay;
+    const classes = ['calendar-cell'];
+    if(isToday){ classes.push('is-today'); }
+    if(isActive){ classes.push('is-active'); }
+    const chips = events.slice(0, 3).map(event => {
+      const label = escapeHtml(event.title || 'Event');
+      const time = event.allDay ? 'All day' : formatTimeLabel(event.startDate || event.start);
+      return `<span class="calendar-chip" title="${label}${time ? ` • ${escapeHtml(time)}` : ''}">${label}</span>`;
+    }).join('');
+    const moreLabel = events.length > 3 ? `<span class="calendar-chip more">+${events.length - 3} more</span>` : '';
+    cells.push(`
+      <button type="button" class="${classes.join(' ')}" data-day-key="${key}" aria-pressed="${isActive ? 'true' : 'false'}">
+        <span class="calendar-date">${day}</span>
+        <div class="calendar-chip-group">${chips}${moreLabel}</div>
+      </button>
+    `);
+  }
+  calendarGrid.innerHTML = cells.join('');
+  renderCalendarDayDetails(activeDay, dayMap);
+}
+
+function renderCalendarDayDetails(dayKey, dayMap = buildCalendarDayMap()){
+  if(!calendarDayDetails){
+    return;
+  }
+  const key = dayKey || formatDayKey(new Date());
+  const date = parseDayKey(key);
+  const events = dayMap.get(key) || [];
+  if(calendarDayTitle){
+    calendarDayTitle.textContent = date ? date.toLocaleDateString(undefined, {weekday: 'long', month: 'long', day: 'numeric'}) : 'Selected day';
+  }
+  if(calendarDaySubtitle){
+    calendarDaySubtitle.textContent = events.length ? `${events.length} event${events.length === 1 ? '' : 's'}` : 'No events scheduled';
+  }
+  if(calendarEventList){
+    if(!events.length){
+      calendarEventList.innerHTML = '<p class="help">No events for this day.</p>';
+    }else{
+      calendarEventList.innerHTML = events.map(event => {
+        const timeLabel = event.allDay ? 'All day' : formatTimeRange(event.startDate, event.endDate);
+        const location = event.location ? `<span class="calendar-meta">${escapeHtml(event.location)}</span>` : '';
+        const description = event.description ? `<p class="help">${escapeHtml(event.description)}</p>` : '';
+        return `
+          <article class="calendar-event">
+            <h4>${escapeHtml(event.title || 'Event')}</h4>
+            <div class="calendar-meta">${escapeHtml(timeLabel || '')}</div>
+            ${location}
+            ${description}
+          </article>
+        `;
+      }).join('');
+    }
+  }
+  state.activeCalendarDayKey = key;
+}
+
+function onCalendarGridClick(event){
+  const target = event.target.closest('[data-day-key]');
+  if(!target){
+    return;
+  }
+  const key = target.dataset.dayKey;
+  if(!key){
+    return;
+  }
+  state.activeCalendarDayKey = key;
+  renderCalendar();
+}
+
+function formatTimeLabel(date){
+  if(!(date instanceof Date)){
+    const parsed = parseDayKey(date);
+    if(!parsed){
+      return '';
+    }
+    return parsed.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  }
+  if(Number.isNaN(date.getTime())){
+    return '';
+  }
+  return date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+}
+
+function formatTimeRange(startDate, endDate){
+  const startLabel = formatTimeLabel(startDate);
+  const endLabel = formatTimeLabel(endDate);
+  if(startLabel && endLabel){
+    return `${startLabel} – ${endLabel}`;
+  }
+  return startLabel || endLabel || '';
 }
 
 function getArchiveOperatorNames(shows = []){
@@ -3551,11 +3881,12 @@ function exportSelectedArchive(format){
 }
 
 function upsertShow(show){
-  const idx = state.shows.findIndex(s=>s.id===show.id);
+  const normalized = normalizeActiveShow(show);
+  const idx = state.shows.findIndex(s=>s.id===normalized.id);
   if(idx >= 0){
-    state.shows[idx] = show;
+    state.shows[idx] = normalized;
   }else{
-    state.shows.unshift(show);
+    state.shows.unshift(normalized);
   }
   sortShows();
 }
@@ -3647,7 +3978,8 @@ function collectShowHeaderValues(){
     label: showLabel?.value.trim() || '',
     leadPilot: leadPilotSelect?.value?.trim() || '',
     monkeyLead: monkeyLeadSelect?.value?.trim() || '',
-    notes: showNotes?.value.trim() || ''
+    notes: showNotes?.value.trim() || '',
+    disciplineId: getActiveDisciplineId()
   };
 }
 
@@ -4585,12 +4917,16 @@ function setView(view){
     toast('Archive workspace requires a workspace role', true);
     return;
   }
+  if(normalizedView === 'calendar' && !userHasRole('crew') && !userHasRole('operator') && !userHasRole('lead')){
+    toast('Calendar requires a workspace role', true);
+    return;
+  }
   if(normalizedView === 'admin' && !isAdmin()){
     toast('Admin workspace requires Admin role', true);
     return;
   }
   state.currentView = normalizedView;
-  const knownViews = ['discipline','landing','lead','operator','archive','admin','workspace'];
+  const knownViews = ['discipline','landing','lead','operator','archive','admin','workspace','calendar'];
   document.body.classList.remove(...knownViews.map(value => `view-${value}`));
   document.body.classList.add(`view-${normalizedView}`);
   setConfigSection(normalizedView);
@@ -4602,6 +4938,8 @@ function setView(view){
       viewBadge.classList.add('view-badge-operator');
     }else if(normalizedView === 'archive'){
       viewBadge.textContent = 'Archive workspace';
+    }else if(normalizedView === 'calendar'){
+      viewBadge.textContent = 'Calendar workspace';
     }else if(normalizedView === 'admin'){
       viewBadge.textContent = 'Admin workspace';
     }else if(normalizedView === 'landing'){
@@ -4633,6 +4971,12 @@ function setView(view){
   }
   if(normalizedView === 'archive'){
     renderArchiveSelect();
+  }
+  if(normalizedView === 'calendar'){
+    renderCalendar();
+    if(!state.calendarLoaded){
+      loadCalendarEvents();
+    }
   }
   if(normalizedView === 'admin' && isAdmin()){
     loadUsers();
@@ -5314,11 +5658,56 @@ function normalizeArchivedShow(raw = {}){
     notes: typeof raw.notes === 'string' ? raw.notes : '',
     crew,
     entries,
+    disciplineId: typeof raw.disciplineId === 'string' ? raw.disciplineId.trim().toLowerCase() : (state.defaultDisciplineId || 'drones'),
     createdAt: toNumber(raw.createdAt),
     archivedAt: toNumber(raw.archivedAt),
     deletedAt: toNumber(raw.deletedAt)
   };
   return show;
+}
+
+function normalizeActiveShow(raw = {}){
+  const crew = Array.isArray(raw.crew) ? normalizeNameList(raw.crew || [], {sort: false}) : [];
+  const entries = Array.isArray(raw.entries)
+    ? raw.entries.map(normalizeArchivedEntry)
+    : [];
+  return {
+    id: raw.id,
+    date: typeof raw.date === 'string' ? raw.date : '',
+    time: typeof raw.time === 'string' ? raw.time : '',
+    label: typeof raw.label === 'string' ? raw.label : '',
+    leadPilot: typeof raw.leadPilot === 'string' ? raw.leadPilot : '',
+    monkeyLead: typeof raw.monkeyLead === 'string' ? raw.monkeyLead : '',
+    notes: typeof raw.notes === 'string' ? raw.notes : '',
+    crew,
+    entries,
+    disciplineId: typeof raw.disciplineId === 'string' ? raw.disciplineId.trim().toLowerCase() : (state.defaultDisciplineId || 'drones'),
+    createdAt: toNumber(raw.createdAt),
+    updatedAt: toNumber(raw.updatedAt)
+  };
+}
+
+function normalizeCalendarEvent(raw = {}){
+  const start = raw.start instanceof Date ? raw.start : parseDayKey(raw.start);
+  const end = raw.end instanceof Date ? raw.end : parseDayKey(raw.end);
+  const startTs = Number.isFinite(raw.startTs) ? raw.startTs : start?.getTime();
+  const endTs = Number.isFinite(raw.endTs) ? raw.endTs : end?.getTime();
+  const startDate = startTs ? new Date(startTs) : start || null;
+  const endDate = endTs ? new Date(endTs) : end || null;
+  return {
+    id: raw.id,
+    title: typeof raw.title === 'string' ? raw.title : 'Event',
+    description: typeof raw.description === 'string' ? raw.description : '',
+    location: typeof raw.location === 'string' ? raw.location : '',
+    start: startDate ? startDate.toISOString() : '',
+    end: endDate ? endDate.toISOString() : '',
+    startTs: startDate ? startDate.getTime() : null,
+    endTs: endDate ? endDate.getTime() : null,
+    startDate,
+    endDate,
+    dayKey: startDate ? formatDayKey(startDate) : '',
+    allDay: Boolean(raw.allDay)
+  };
 }
 
 function normalizeArchivedEntry(raw = {}){

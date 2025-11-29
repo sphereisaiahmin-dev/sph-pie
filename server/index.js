@@ -50,6 +50,7 @@ const DRONE_CREW_ROLE = DRONE_DISCIPLINE_ID ? getRoleKey(DRONE_DISCIPLINE_ID, 'c
 const DRONE_READ_ROLES = [DRONE_LEAD_ROLE, DRONE_OPERATOR_ROLE, DRONE_CREW_ROLE].filter(Boolean);
 const DRONE_WRITE_ROLES = [DRONE_LEAD_ROLE].filter(Boolean);
 const DRONE_ENTRY_ROLES = [DRONE_LEAD_ROLE, DRONE_OPERATOR_ROLE].filter(Boolean);
+const CALENDAR_FEED_URL = process.env.CALENDAR_FEED_URL || 'https://ics.teamup.com/feed/8orye2s63sbb3virutab5ny6beycko/12007214.ics';
 
 async function bootstrap(){
   const app = express();
@@ -287,6 +288,17 @@ async function bootstrap(){
     const provider = getProvider();
     const shows = await provider.listArchivedShows();
     res.json({shows});
+  }));
+
+  app.get('/api/calendar', requireRoles(...DRONE_READ_ROLES), asyncHandler(async (req, res)=>{
+    const provider = getProvider();
+    if(provider?.syncCalendarEvents){
+      await provider.syncCalendarEvents(CALENDAR_FEED_URL);
+    }
+    const events = typeof provider?.listCalendarEvents === 'function'
+      ? await provider.listCalendarEvents()
+      : [];
+    res.json({events});
   }));
 
   app.post('/api/shows', requireRoles(...DRONE_WRITE_ROLES), asyncHandler(async (req, res)=>{

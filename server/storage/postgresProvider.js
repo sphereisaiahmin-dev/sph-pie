@@ -2,6 +2,7 @@ const { Pool } = require('pg');
 const { v4: uuidv4 } = require('uuid');
 
 const { dispatchShowEvent } = require('../webhookDispatcher');
+const { fetchCalendarFeed, getCalendarCutoffTimestamp } = require('../calendarFeed');
 
 const AUTO_ARCHIVE_WINDOW_MS = 12 * 60 * 60 * 1000;
 const ARCHIVE_RETENTION_MONTHS = 2;
@@ -265,6 +266,28 @@ class PostgresProvider {
     await this._refreshArchive();
   }
 
+  async listCalendarEvents(){
+    await this._pruneCalendarEvents();
+    const rows = await this._select(`SELECT data FROM ${this._table('calendar_events')} ORDER BY start_ts ASC`);
+    return rows.map(row => this._mapCalendarRow(row)).filter(Boolean);
+  }
+
+  async syncCalendarEvents(feedUrl){
+    const cutoff = getCalendarCutoffTimestamp();
+    await this._pruneCalendarEvents(cutoff);
+    const events = await fetchCalendarFeed(feedUrl);
+    const filtered = (Array.isArray(events) ? events : []).filter(event => Number.isFinite(event.startTs) && event.startTs >= cutoff);
+    const seen = new Set();
+    for(const event of filtered){
+      if(!event || !event.id || seen.has(event.id)){
+        continue;
+      }
+      seen.add(event.id);
+      await this._saveCalendarEvent(event);
+    }
+    return this.listCalendarEvents();
+  }
+
   async getStaff(){
     return {
       crew: await this._listStaffByRole('crew'),
@@ -315,6 +338,7 @@ class PostgresProvider {
       leadPilot: typeof raw.leadPilot === 'string' ? raw.leadPilot.trim() : '',
       monkeyLead: typeof raw.monkeyLead === 'string' ? raw.monkeyLead.trim() : '',
       notes: typeof raw.notes === 'string' ? raw.notes.trim() : '',
+      disciplineId: typeof raw.disciplineId === 'string' ? raw.disciplineId.trim().toLowerCase() : '',
       entries: Array.isArray(raw.entries) ? raw.entries.map(e => this._normalizeEntry(e)) : [],
       createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
       updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now()
@@ -399,6 +423,7 @@ class PostgresProvider {
     const staffTable = this._table('staff');
     const monkeyTable = this._table('monkey_leads');
     const archiveTable = this._table('show_archive');
+    const calendarTable = this._table('calendar_events');
     await this._run(`
       CREATE TABLE IF NOT EXISTS ${showsTable} (
         id UUID PRIMARY KEY,
@@ -433,6 +458,16 @@ class PostgresProvider {
     `);
     await this._run(`CREATE INDEX IF NOT EXISTS ${this._indexName('show_archive_archived_at_idx')} ON ${archiveTable} (archived_at DESC)`);
     await this._run(`CREATE INDEX IF NOT EXISTS ${this._indexName('staff_role_name_idx')} ON ${staffTable} (role, name)`);
+    await this._run(`
+      CREATE TABLE IF NOT EXISTS ${calendarTable} (
+        id TEXT PRIMARY KEY,
+        data JSONB NOT NULL,
+        start_ts BIGINT,
+        end_ts BIGINT,
+        created_at TIMESTAMPTZ NOT NULL
+      )
+    `);
+    await this._run(`CREATE INDEX IF NOT EXISTS ${this._indexName('calendar_events_start_idx')} ON ${calendarTable} (start_ts)`);
   }
 
   async _seedDefaultStaff(){
@@ -703,6 +738,41 @@ class PostgresProvider {
       show.crew = [];
     }
     return show;
+  }
+
+  _mapCalendarRow(row){
+    if(!row){
+      return null;
+    }
+    return this._parseRowData(row.data);
+  }
+
+  async _saveCalendarEvent(event){
+    const table = this._table('calendar_events');
+    const payload = event || {};
+    await this._run(
+      `INSERT INTO ${table} (id, data, start_ts, end_ts, created_at)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT(id) DO UPDATE SET data = EXCLUDED.data, start_ts = EXCLUDED.start_ts, end_ts = EXCLUDED.end_ts, created_at = EXCLUDED.created_at`,
+      [
+        event.id,
+        payload,
+        this._getTimestamp(event.startTs),
+        this._getTimestamp(event.endTs),
+        new Date(event.startTs || Date.now()).toISOString()
+      ]
+    );
+  }
+
+  async _pruneCalendarEvents(cutoffTs){
+    const cutoff = Number.isFinite(cutoffTs) ? cutoffTs : getCalendarCutoffTimestamp();
+    const rows = await this._select(`SELECT id FROM ${this._table('calendar_events')} WHERE start_ts < $1`, [cutoff]);
+    if(rows.length){
+      const ids = rows.map(row => row.id);
+      await this._run(`DELETE FROM ${this._table('calendar_events')} WHERE id = ANY($1)`, [ids]);
+      return true;
+    }
+    return false;
   }
 
   _normalizeNameList(list, options = {}){

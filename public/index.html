@@ -309,15 +309,17 @@
           <span class="legend-dot all-day">All day</span>
         </div>
       </div>
-      <div class="calendar-layout">
-        <div id="calendarGrid" class="calendar-grid" role="grid" aria-label="Monthly calendar"></div>
-        <aside id="calendarDayDetails" class="calendar-day-details" aria-live="polite">
-          <div class="calendar-day-header">
-            <h3 id="calendarDayTitle">Today</h3>
-            <p id="calendarDaySubtitle" class="help"></p>
-          </div>
-          <div id="calendarEventList" class="calendar-event-list"></div>
-        </aside>
+      <div id="calendarLayout" class="calendar-layout">
+        <div class="calendar-grid-shell">
+          <div id="calendarGrid" class="calendar-grid" role="grid" aria-label="Monthly calendar"></div>
+          <aside id="calendarDayDetails" class="calendar-day-details" aria-live="polite">
+            <div class="calendar-day-header">
+              <h3 id="calendarDayTitle">Today</h3>
+              <p id="calendarDaySubtitle" class="help"></p>
+            </div>
+            <div id="calendarEventList" class="calendar-event-list"></div>
+          </aside>
+        </div>
       </div>
     </section>
 

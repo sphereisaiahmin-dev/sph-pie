@@ -222,7 +222,6 @@ const disciplineTitle = el('disciplineTitle');
 const landingTitle = el('landingTitle');
 const landingSubtitle = el('landingSubtitle');
 const workspaceTitle = el('workspaceTitle');
-const landingBackBtn = el('landingBack');
 const userRoleGrid = el('userRoleGrid');
 const userIdInput = el('userId');
 const userNameInput = el('userName');
@@ -439,9 +438,6 @@ function initAuthUI(){
   }
   if(landingDisciplineShortcuts){
     landingDisciplineShortcuts.addEventListener('click', onDisciplineListClick);
-  }
-  if(landingBackBtn){
-    landingBackBtn.addEventListener('click', ()=> setView('discipline'));
   }
   setupIdleActivityTracking();
   setupUnloadLogoutHandler();

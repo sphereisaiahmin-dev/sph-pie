@@ -4,6 +4,7 @@ const initSqlJs = require('sql.js');
 const { v4: uuidv4 } = require('uuid');
 
 const { dispatchShowEvent } = require('../webhookDispatcher');
+const { fetchCalendarFeed, getCalendarCutoffTimestamp } = require('../calendarFeed');
 
 const AUTO_ARCHIVE_WINDOW_MS = 12 * 60 * 60 * 1000;
 const ARCHIVE_RETENTION_MONTHS = 2;
@@ -267,6 +268,32 @@ class SqlProvider {
     await this._refreshArchive();
   }
 
+  async listCalendarEvents(){
+    await this._pruneCalendarEvents();
+    const rows = this._select('SELECT data FROM calendar_events ORDER BY start_ts ASC');
+    return rows.map(row => this._mapCalendarRow(row)).filter(Boolean);
+  }
+
+  async syncCalendarEvents(feedUrl){
+    const cutoff = getCalendarCutoffTimestamp();
+    await this._pruneCalendarEvents(cutoff);
+    const events = await fetchCalendarFeed(feedUrl);
+    const filtered = (Array.isArray(events) ? events : []).filter(event => Number.isFinite(event.startTs) && event.startTs >= cutoff);
+    const seen = new Set();
+    filtered.forEach(event => {
+      if(!event || !event.id){
+        return;
+      }
+      if(seen.has(event.id)){
+        return;
+      }
+      seen.add(event.id);
+      this._saveCalendarEvent(event);
+    });
+    await this._persistDatabase();
+    return this.listCalendarEvents();
+  }
+
   async getStaff(){
     return {
       crew: this._listStaffByRole('crew'),
@@ -316,6 +343,7 @@ class SqlProvider {
       leadPilot: typeof raw.leadPilot === 'string' ? raw.leadPilot.trim() : '',
       monkeyLead: typeof raw.monkeyLead === 'string' ? raw.monkeyLead.trim() : '',
       notes: typeof raw.notes === 'string' ? raw.notes.trim() : '',
+      disciplineId: typeof raw.disciplineId === 'string' ? raw.disciplineId.trim().toLowerCase() : '',
       entries: Array.isArray(raw.entries) ? raw.entries.map(e => this._normalizeEntry(e)) : [],
       createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
       updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now()
@@ -481,6 +509,41 @@ class SqlProvider {
       `);
       if(!this._columnExists('show_archive', 'deleted_at')){
         this.db.exec('ALTER TABLE show_archive ADD COLUMN deleted_at TEXT');
+        mutated = true;
+      }
+    }
+
+    if(!this._tableExists('calendar_events')){
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS calendar_events (
+          id TEXT PRIMARY KEY,
+          data TEXT NOT NULL,
+          start_ts INTEGER,
+          end_ts INTEGER,
+          created_at TEXT NOT NULL
+        )
+      `);
+      mutated = true;
+    }else{
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS calendar_events (
+          id TEXT PRIMARY KEY,
+          data TEXT NOT NULL,
+          start_ts INTEGER,
+          end_ts INTEGER,
+          created_at TEXT NOT NULL
+        )
+      `);
+      if(!this._columnExists('calendar_events', 'start_ts')){
+        this.db.exec('ALTER TABLE calendar_events ADD COLUMN start_ts INTEGER');
+        mutated = true;
+      }
+      if(!this._columnExists('calendar_events', 'end_ts')){
+        this.db.exec('ALTER TABLE calendar_events ADD COLUMN end_ts INTEGER');
+        mutated = true;
+      }
+      if(!this._columnExists('calendar_events', 'created_at')){
+        this.db.exec('ALTER TABLE calendar_events ADD COLUMN created_at TEXT NOT NULL DEFAULT ""');
         mutated = true;
       }
     }
@@ -828,6 +891,47 @@ class SqlProvider {
       show.crew = [];
     }
     return show;
+  }
+
+  _mapCalendarRow(row){
+    if(!row){
+      return null;
+    }
+    try{
+      return JSON.parse(row.data);
+    }catch(err){
+      return null;
+    }
+  }
+
+  _saveCalendarEvent(event){
+    const payload = JSON.stringify(event);
+    const createdAt = this._stringifyTimestamp(event.startTs) || new Date().toISOString();
+    this._run(`
+      INSERT INTO calendar_events (id, data, start_ts, end_ts, created_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET data = excluded.data, start_ts = excluded.start_ts, end_ts = excluded.end_ts, created_at = excluded.created_at
+    `, [
+      event.id,
+      payload,
+      this._getTimestamp(event.startTs),
+      this._getTimestamp(event.endTs),
+      createdAt
+    ]);
+  }
+
+  async _pruneCalendarEvents(cutoffTs){
+    const cutoff = Number.isFinite(cutoffTs) ? cutoffTs : getCalendarCutoffTimestamp();
+    const rows = this._select('SELECT id, start_ts FROM calendar_events');
+    const expiredIds = rows
+      .filter(row => Number.isFinite(row.start_ts) && row.start_ts < cutoff)
+      .map(row => row.id);
+    if(expiredIds.length){
+      expiredIds.forEach(id => this._run('DELETE FROM calendar_events WHERE id = ?', [id]));
+      await this._persistDatabase();
+      return true;
+    }
+    return false;
   }
 
   _getTimestamp(value){

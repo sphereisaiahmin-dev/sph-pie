@@ -117,18 +117,34 @@
     </section>
 
     <section id="landingView" class="panel landing-panel view-landing-only" aria-labelledby="landingTitle">
-      <h2 id="landingTitle">Choose workspace</h2>
-      <p id="landingSubtitle" class="lead">Select the role you need for this session.</p>
-      <div class="role-options">
-        <div class="role-options-main">
-          <button id="chooseLead" type="button" class="btn primary role-btn">Lead</button>
-          <button id="chooseOperator" type="button" class="btn primary role-btn">Operator</button>
-        </div>
-        <div class="role-options-archive">
-          <button id="chooseArchive" type="button" class="btn primary role-btn">Archive</button>
-        </div>
+      <h2 id="landingTitle">Workspace hub</h2>
+      <p id="landingSubtitle" class="lead">Choose where you want to work today.</p>
+      <div class="landing-badges">
+        <article class="landing-badge">
+          <header class="landing-badge__header">
+            <span class="badge-label">Forms</span>
+            <p class="help">Pick a discipline and open the right form workspace.</p>
+          </header>
+          <div class="landing-badge__body">
+            <div id="landingDisciplineShortcuts" class="discipline-shortcuts" role="group" aria-label="Discipline form shortcuts"></div>
+            <div class="badge-actions">
+              <button id="chooseLead" type="button" class="btn primary role-btn">Lead</button>
+              <button id="chooseOperator" type="button" class="btn primary role-btn">Operator</button>
+            </div>
+          </div>
+        </article>
+        <article class="landing-badge">
+          <header class="landing-badge__header">
+            <span class="badge-label badge-info">Info</span>
+            <p class="help">Check schedules and archived performance.</p>
+          </header>
+          <div class="landing-badge__body badge-actions badge-actions--stacked">
+            <button id="openCalendar" type="button" class="btn primary role-btn">Calendar</button>
+            <button id="chooseArchive" type="button" class="btn ghost role-btn">Archive</button>
+          </div>
+        </article>
       </div>
-      <p class="help">Lead sets up shows and manages exports. Operator logs entries against those shows.</p>
+      <p class="help">Lead sets up shows and manages exports. Operator logs entries against those shows. The Info section keeps your schedule and archives within reach.</p>
     </section>
 
     <section id="adminView" class="panel view-admin-only" aria-labelledby="adminTitle">
@@ -202,6 +218,10 @@
           <button id="refreshArchive" type="button" class="btn ghost">Refresh archive</button>
         </div>
       </div>
+      <div class="archive-filter-bar">
+        <label for="archiveDisciplineFilter">Discipline</label>
+        <select id="archiveDisciplineFilter"></select>
+      </div>
       <div class="grid archive-grid">
         <div class="col-4">
           <label for="archiveShowSelect">Archived show</label>
@@ -265,6 +285,39 @@
             </div>
           </div>
         </div>
+      </div>
+    </section>
+
+    <section id="calendarView" class="panel view-calendar-only" aria-labelledby="calendarTitle">
+      <div class="panel-header">
+        <div>
+          <h2 id="calendarTitle">Production calendar</h2>
+          <p class="help">Events sync from the shared iCal feed.</p>
+        </div>
+        <div class="panel-actions">
+          <button id="calendarRefresh" type="button" class="btn ghost">Refresh calendar</button>
+        </div>
+      </div>
+      <div class="calendar-toolbar">
+        <div class="calendar-month-nav">
+          <button id="calendarPrev" type="button" class="btn ghost">Previous</button>
+          <div id="calendarMonthLabel" class="calendar-month-label"></div>
+          <button id="calendarNext" type="button" class="btn ghost">Next</button>
+        </div>
+        <div class="calendar-legend">
+          <span class="legend-dot today">Today</span>
+          <span class="legend-dot all-day">All day</span>
+        </div>
+      </div>
+      <div class="calendar-layout">
+        <div id="calendarGrid" class="calendar-grid" role="grid" aria-label="Monthly calendar"></div>
+        <aside id="calendarDayDetails" class="calendar-day-details" aria-live="polite">
+          <div class="calendar-day-header">
+            <h3 id="calendarDayTitle">Today</h3>
+            <p id="calendarDaySubtitle" class="help"></p>
+          </div>
+          <div id="calendarEventList" class="calendar-event-list"></div>
+        </aside>
       </div>
     </section>
 

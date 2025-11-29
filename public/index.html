@@ -104,19 +104,7 @@
       </div>
 
       <div class="container" role="main">
-    <section id="disciplineView" class="panel landing-panel view-discipline-only" aria-labelledby="disciplineTitle">
-      <h2 id="disciplineTitle">Choose discipline</h2>
-      <p class="lead">Select the production discipline you want to manage.</p>
-      <div id="disciplineList" class="discipline-options" role="list"></div>
-    </section>
-
-    <section id="workspaceView" class="panel landing-panel view-workspace-only" aria-labelledby="workspaceTitle">
-      <h2 id="workspaceTitle">Choose your workspace</h2>
-      <p id="workspaceMessage" class="lead">Workspaces for this discipline are coming soon.</p>
-      <div id="workspaceList" class="role-options" role="list"></div>
-    </section>
-
-    <section id="landingView" class="panel landing-panel view-landing-only" aria-labelledby="landingTitle">
+    <section id="disciplineView" class="panel landing-panel view-discipline-only" aria-labelledby="landingTitle">
       <h2 id="landingTitle">Workspace hub</h2>
       <p id="landingSubtitle" class="lead">Choose where you want to work today.</p>
       <div class="landing-badges">
@@ -145,6 +133,21 @@
         </article>
       </div>
       <p class="help">Lead sets up shows and manages exports. Operator logs entries against those shows. The Info section keeps your schedule and archives within reach.</p>
+    </section>
+
+    <section id="workspaceView" class="panel landing-panel view-workspace-only" aria-labelledby="workspaceTitle">
+      <h2 id="workspaceTitle">Choose your workspace</h2>
+      <p id="workspaceMessage" class="lead">Workspaces for this discipline are coming soon.</p>
+      <div id="workspaceList" class="role-options" role="list"></div>
+    </section>
+
+    <section id="landingView" class="panel landing-panel view-landing-only" aria-labelledby="landingWorkspaceTitle">
+      <h2 id="landingWorkspaceTitle">Choose your workspace</h2>
+      <p class="lead">Pick where you need to work for the Drones team.</p>
+      <div class="badge-actions" role="group" aria-label="Drone workspaces">
+        <button id="droneLead" type="button" class="btn primary role-btn">Lead</button>
+        <button id="droneOperator" type="button" class="btn primary role-btn">Operator</button>
+      </div>
     </section>
 
     <section id="adminView" class="panel view-admin-only" aria-labelledby="adminTitle">

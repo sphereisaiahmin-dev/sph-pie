@@ -303,6 +303,8 @@ const chooseLeadBtn = el('chooseLead');
 const chooseOperatorBtn = el('chooseOperator');
 const chooseArchiveBtn = el('chooseArchive');
 const openCalendarBtn = el('openCalendar');
+const droneLeadBtn = el('droneLead');
+const droneOperatorBtn = el('droneOperator');
 const entryShowSelect = el('entryShowSelect');
 const operatorShowSummary = el('operatorShowSummary');
 const archiveShowSelect = el('archiveShowSelect');
@@ -637,6 +639,16 @@ function updateWorkspaceAvailability(){
     const allowed = hasWorkspaces && userHasRole('operator');
     chooseOperatorBtn.disabled = !allowed;
     chooseOperatorBtn.classList.toggle('is-disabled', !allowed);
+  }
+  if(droneLeadBtn){
+    const allowed = hasWorkspaces && userHasRole('lead');
+    droneLeadBtn.disabled = !allowed;
+    droneLeadBtn.classList.toggle('is-disabled', !allowed);
+  }
+  if(droneOperatorBtn){
+    const allowed = hasWorkspaces && userHasRole('operator');
+    droneOperatorBtn.disabled = !allowed;
+    droneOperatorBtn.classList.toggle('is-disabled', !allowed);
   }
   if(chooseArchiveBtn){
     const allowed = hasWorkspaces && (userHasRole('lead') || userHasRole('operator') || userHasRole('crew'));
@@ -1093,6 +1105,25 @@ function initUI(){
   }
   if(chooseOperatorBtn){
     chooseOperatorBtn.addEventListener('click', ()=>{
+      if(!userHasRole('operator')){
+        toast('Operator workspace requires Operator role', true);
+        return;
+      }
+      setView('operator');
+    });
+  }
+  if(droneLeadBtn){
+    droneLeadBtn.addEventListener('click', ()=>{
+      if(!userHasRole('lead')){
+        toast('Lead workspace requires Lead role', true);
+        return;
+      }
+      setView('lead');
+      setCurrentShow(state.currentShowId || (state.shows[0]?.id ?? null));
+    });
+  }
+  if(droneOperatorBtn){
+    droneOperatorBtn.addEventListener('click', ()=>{
       if(!userHasRole('operator')){
         toast('Operator workspace requires Operator role', true);
         return;

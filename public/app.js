@@ -123,7 +123,7 @@ const state = {
   serverPort: 3000,
   storageLabel: 'SQL.js storage v2',
   storageMeta: null,
-  newShowDraft: createEmptyShowDraft(),
+  newShowDraft: null,
   showHeaderShowErrors: false,
   isCreatingShow: false,
   archivedShows: [],
@@ -174,6 +174,8 @@ const state = {
   },
   defaultTempPassword: 'adminsphere1'
 };
+
+state.newShowDraft = createEmptyShowDraft();
 
 const syncState = {
   channel: null,
@@ -336,6 +338,7 @@ const webhookBadge = el('webhookBadge');
 const refreshShowsBtn = el('refreshShows');
 const lanAddressEl = el('lanAddress');
 const calendarView = el('calendarView');
+const calendarLayout = el('calendarLayout');
 const calendarGrid = el('calendarGrid');
 const calendarMonthLabel = el('calendarMonthLabel');
 const calendarDayDetails = el('calendarDayDetails');
@@ -1284,6 +1287,7 @@ function initUI(){
     calendarRefreshBtn.dataset.label = calendarRefreshBtn.textContent;
     calendarRefreshBtn.addEventListener('click', ()=> loadCalendarEvents({force: true}));
   }
+  window.addEventListener('resize', ()=> positionCalendarDayDetails(state.activeCalendarDayKey));
 
   document.addEventListener('click', event=>{
     if(!event.target.closest('.show-menu-wrap')){
@@ -2909,6 +2913,8 @@ function renderCalendarDayDetails(dayKey, dayMap = buildCalendarDayMap()){
   const key = dayKey || formatDayKey(new Date());
   const date = parseDayKey(key);
   const events = dayMap.get(key) || [];
+  const targetCell = calendarGrid ? calendarGrid.querySelector(`[data-day-key="${key}"]`) : null;
+  calendarDayDetails.classList.toggle('is-visible', Boolean(targetCell));
   if(calendarDayTitle){
     calendarDayTitle.textContent = date ? date.toLocaleDateString(undefined, {weekday: 'long', month: 'long', day: 'numeric'}) : 'Selected day';
   }
@@ -2935,6 +2941,30 @@ function renderCalendarDayDetails(dayKey, dayMap = buildCalendarDayMap()){
     }
   }
   state.activeCalendarDayKey = key;
+  positionCalendarDayDetails(key, targetCell);
+}
+
+function positionCalendarDayDetails(dayKey, targetCell){
+  if(!calendarDayDetails || !calendarGrid){
+    return;
+  }
+  const cell = targetCell || calendarGrid.querySelector(`[data-day-key="${dayKey}"]`);
+  calendarDayDetails.classList.toggle('is-visible', Boolean(cell));
+  if(!cell){
+    return;
+  }
+  const shell = calendarLayout || calendarGrid;
+  const shellRect = shell.getBoundingClientRect();
+  const cellRect = cell.getBoundingClientRect();
+  const detailWidth = calendarDayDetails.offsetWidth || 0;
+  const desiredLeft = cellRect.left - shellRect.left + (cellRect.width / 2) - (detailWidth / 2);
+  const maxLeft = (shell.clientWidth || shellRect.width) - detailWidth - 12;
+  const left = Math.max(12, Math.min(desiredLeft, maxLeft));
+  const top = cellRect.bottom - shellRect.top + 12;
+  const arrowOffset = (cellRect.left - shellRect.left + (cellRect.width / 2)) - left;
+  calendarDayDetails.style.left = `${left}px`;
+  calendarDayDetails.style.top = `${top}px`;
+  calendarDayDetails.style.setProperty('--popover-arrow-left', `${Math.max(18, Math.min(arrowOffset, Math.max(detailWidth - 18, 18)))}px`);
 }
 
 function onCalendarGridClick(event){

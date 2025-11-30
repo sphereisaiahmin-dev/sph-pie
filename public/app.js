@@ -103,6 +103,9 @@ function createEmptyShowDraft(){
     date: '',
     time: '',
     label: '',
+    showNumber: null,
+    calendarEventId: '',
+    eventName: '',
     leadPilot: '',
     monkeyLead: '',
     notes: '',
@@ -144,6 +147,7 @@ const state = {
   calendarMonth: null,
   activeCalendarDayKey: null,
   calendarLoaded: false,
+  calendarFilter: '',
   webhookConfig: {
     enabled: false,
     url: '',
@@ -190,6 +194,15 @@ let uiInitialized = false;
 
 const SYNC_CHANNEL_NAME = 'pie-sync';
 const IDLE_LOGOUT_MS = 5 * 60 * 1000;
+
+const CALENDAR_COLOR_MAP = {
+  WOZ: '#22c55e',
+  EAGLES: '#3b82f6'
+};
+
+const CALENDAR_SPECIAL_COLOR_MATCHES = [
+  {match: 'zac brown band: love and fear', color: '#ef4444', key: 'ZAC BROWN BAND: LOVE AND FEAR', label: 'Zac Brown Band: Love and Fear'}
+];
 
 const appTitle = el('appTitle');
 const titleSubPrefix = el('titleSubPrefix');
@@ -239,6 +252,8 @@ const unitLabelEl = el('unitLabel');
 const showDate = el('showDate');
 const showTime = el('showTime');
 const showLabel = el('showLabel');
+const showEventSelect = el('showEventSelect');
+const showNumberInput = el('showNumber');
 const showNotes = el('showNotes');
 const showCrewSelect = el('showCrew');
 const leadPilotSelect = el('leadPilot');
@@ -279,6 +294,10 @@ const menuUserName = el('menuUserName');
 const menuUserEmail = el('menuUserEmail');
 const menuUserRoles = el('menuUserRoles');
 const menuDateTime = el('menuDateTime');
+const menuDayEvents = el('menuDayEvents');
+const menuDayLabel = el('menuDayLabel');
+const menuDayHint = el('menuDayHint');
+const menuDayEmpty = el('menuDayEmpty');
 const configNavButtons = qsa('[data-config-target]');
 const adminWorkspaceNavBtn = el('adminWorkspaceNav');
 const configSections = qsa('[data-config-section]');
@@ -350,6 +369,7 @@ const calendarEventList = el('calendarEventList');
 const calendarPrevBtn = el('calendarPrev');
 const calendarNextBtn = el('calendarNext');
 const calendarRefreshBtn = el('calendarRefresh');
+const calendarEventFilter = el('calendarEventFilter');
 
 let currentConfigSection = 'admin';
 let webhookModalSnapshot = null;
@@ -1074,7 +1094,15 @@ function initUI(){
     updateIssueVisibility();
   });
 
-  showDate.addEventListener('change', ()=> handleShowHeaderChange('date', showDate.value));
+  showDate.addEventListener('change', ()=>{
+    handleShowHeaderChange('date', showDate.value);
+    state.activeCalendarDayKey = showDate.value || state.activeCalendarDayKey || formatDayKey(new Date());
+    ensureCalendarEventsLoaded().then(()=>{
+      populateShowEventSelect();
+      renderMenuDayEvents(state.activeCalendarDayKey);
+      renderCalendar();
+    }).catch(()=>{});
+  });
   showTime.addEventListener('change', ()=> handleShowHeaderChange('time', showTime.value));
   showLabel.addEventListener('input', ()=> handleShowHeaderChange('label', showLabel.value));
   showNotes.addEventListener('input', ()=> handleShowHeaderChange('notes', showNotes.value));
@@ -1083,6 +1111,9 @@ function initUI(){
   }
   if(monkeyLeadSelect){
     monkeyLeadSelect.addEventListener('change', ()=> handleShowHeaderChange('monkeyLead', monkeyLeadSelect.value));
+  }
+  if(showEventSelect){
+    showEventSelect.addEventListener('change', onShowEventChange);
   }
 
   if(newShowBtn){ newShowBtn.addEventListener('click', onNewShow); }
@@ -1318,6 +1349,14 @@ function initUI(){
     calendarRefreshBtn.dataset.label = calendarRefreshBtn.textContent;
     calendarRefreshBtn.addEventListener('click', ()=> loadCalendarEvents({force: true}));
   }
+  if(calendarEventFilter){
+    calendarEventFilter.addEventListener('change', ()=>{
+      state.calendarFilter = (calendarEventFilter.value || '').trim().toUpperCase();
+      renderCalendar();
+      renderMenuDayEvents();
+      populateShowEventSelect();
+    });
+  }
   window.addEventListener('resize', ()=> positionCalendarDayDetails(state.activeCalendarDayKey));
 
   document.addEventListener('click', event=>{
@@ -1327,6 +1366,7 @@ function initUI(){
   });
 
   renderShowHeaderDraft();
+  renderMenuDayEvents(state.activeCalendarDayKey);
 }
 
 async function loadConfig(){
@@ -1640,6 +1680,8 @@ async function loadShows(){
     updateConnectionIndicator();
     updateWebhookPreview();
     await loadArchivedShows({silent: true, preserveSelection: true});
+    populateShowEventSelect();
+    renderMenuDayEvents(state.activeCalendarDayKey);
   }catch(err){
     console.error('Failed to load shows', err);
     state.shows = [];
@@ -1708,8 +1750,12 @@ async function loadArchivedShows(options = {}){
 
 async function loadCalendarEvents(options = {}){
   const {force = false} = options;
+  state.activeCalendarDayKey = state.activeCalendarDayKey || formatDayKey(new Date());
   if(state.calendarLoaded && !force){
+    renderCalendarFilters();
+    populateShowEventSelect();
     renderCalendar();
+    renderMenuDayEvents();
     return;
   }
   if(calendarRefreshBtn){
@@ -1721,7 +1767,10 @@ async function loadCalendarEvents(options = {}){
     const events = Array.isArray(data?.events) ? data.events.map(normalizeCalendarEvent) : [];
     state.calendarEvents = events.filter(event => Number.isFinite(event.startTs));
     state.calendarLoaded = true;
+    renderCalendarFilters();
     renderCalendar();
+    renderMenuDayEvents();
+    populateShowEventSelect();
   }catch(err){
     console.error('Failed to load calendar', err);
     toast('Failed to load calendar feed', true);
@@ -1731,6 +1780,13 @@ async function loadCalendarEvents(options = {}){
       calendarRefreshBtn.textContent = calendarRefreshBtn.dataset.label || 'Refresh calendar';
     }
   }
+}
+
+function ensureCalendarEventsLoaded(){
+  if(state.calendarLoaded){
+    return Promise.resolve();
+  }
+  return loadCalendarEvents({force: true});
 }
 
 async function onRefreshShows(){
@@ -2857,6 +2913,56 @@ function parseDayKey(key){
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+function deriveCalendarMetadata(title = '', providedName = ''){
+  const firstWordMatch = title.match(/^([A-Za-z]+)/);
+  const normalizedProvided = typeof providedName === 'string' ? providedName.trim().toUpperCase() : '';
+  const eventName = normalizedProvided || (firstWordMatch ? firstWordMatch[1].toUpperCase() : '');
+  const numberMatch = title.match(/#\s*(\d+)/);
+  const showNumber = numberMatch ? Number(numberMatch[1]) : null;
+  const lowerTitle = title.toLowerCase();
+  const special = CALENDAR_SPECIAL_COLOR_MATCHES.find(entry => lowerTitle.includes(entry.match));
+  const filterKey = (special?.key) || eventName;
+  const filterLabel = special?.label || eventName || title || 'Event';
+  const color = special?.color || (eventName ? CALENDAR_COLOR_MAP[eventName] : '') || '';
+  return {eventName, showNumber, color, filterKey, filterLabel};
+}
+
+function buildCalendarDisplayLabel(eventName, showNumber, title){
+  if(eventName && Number.isFinite(showNumber)){
+    return `${eventName} #${showNumber}`;
+  }
+  if(eventName){
+    return eventName;
+  }
+  if(Number.isFinite(showNumber)){
+    return `Show #${showNumber}`;
+  }
+  return title || 'Event';
+}
+
+function getAllCalendarEvents(){
+  return Array.isArray(state.calendarEvents) ? state.calendarEvents : [];
+}
+
+function getFilteredCalendarEvents(){
+  const filterKey = (state.calendarFilter || '').trim().toUpperCase();
+  const events = getAllCalendarEvents();
+  if(!filterKey){
+    return events;
+  }
+  return events.filter(event => {
+    const key = (event.filterKey || event.eventName || '').trim().toUpperCase();
+    const title = (event.title || '').toUpperCase();
+    return key === filterKey || title.includes(filterKey);
+  });
+}
+
+function getCalendarDayEvents(dayKey, {applyFilter = true} = {}){
+  const key = dayKey || formatDayKey(new Date());
+  const events = applyFilter ? getFilteredCalendarEvents() : getAllCalendarEvents();
+  return events.filter(event => (event.dayKey || formatDayKey(event.startDate || event.start)) === key);
+}
+
 function changeCalendarMonth(delta){
   const start = getCalendarMonthStart();
   start.setMonth(start.getMonth() + delta);
@@ -2875,7 +2981,7 @@ function daysInMonth(date){
   return new Date(working.getFullYear(), working.getMonth() + 1, 0).getDate();
 }
 
-function buildCalendarDayMap(events = state.calendarEvents){
+function buildCalendarDayMap(events = getFilteredCalendarEvents()){
   const map = new Map();
   (Array.isArray(events) ? events : []).forEach(event => {
     const key = event.dayKey || formatDayKey(event.startDate || event.start);
@@ -2895,10 +3001,15 @@ function renderCalendar(){
   if(!calendarGrid){
     return;
   }
+  renderCalendarFilters();
+  if(calendarEventFilter){
+    calendarEventFilter.value = state.calendarFilter || '';
+  }
   const monthStart = getCalendarMonthStart();
   state.calendarMonth = monthStart;
   const todayKey = formatDayKey(new Date());
   const activeDay = state.activeCalendarDayKey || todayKey;
+  state.activeCalendarDayKey = activeDay;
   if(calendarMonthLabel){
     calendarMonthLabel.textContent = monthStart.toLocaleDateString(undefined, {month: 'long', year: 'numeric'});
   }
@@ -2921,9 +3032,15 @@ function renderCalendar(){
     if(isToday){ classes.push('is-today'); }
     if(isActive){ classes.push('is-active'); }
     const chips = events.slice(0, 3).map(event => {
-      const label = escapeHtml(event.title || 'Event');
+      const label = escapeHtml(event.displayLabel || event.title || 'Event');
       const time = event.allDay ? 'All day' : formatTimeLabel(event.startDate || event.start);
-      return `<span class="calendar-chip" title="${label}${time ? ` • ${escapeHtml(time)}` : ''}">${label}</span>`;
+      const classes = ['calendar-chip'];
+      if(event.color){
+        classes.push('has-color');
+      }
+      const chipStyle = event.color ? ` style="--chip-color:${event.color}"` : '';
+      const dot = event.color ? `<span class="chip-dot" style="background:${event.color}"></span>` : '';
+      return `<span class="${classes.join(' ')}"${chipStyle} title="${label}${time ? ` • ${escapeHtml(time)}` : ''}">${dot}${label}</span>`;
     }).join('');
     const moreLabel = events.length > 3 ? `<span class="calendar-chip more">+${events.length - 3} more</span>` : '';
     cells.push(`
@@ -2937,6 +3054,29 @@ function renderCalendar(){
   renderCalendarDayDetails(activeDay, dayMap);
 }
 
+function renderCalendarFilters(){
+  if(!calendarEventFilter){
+    return;
+  }
+  const current = (state.calendarFilter || '').trim().toUpperCase();
+  const options = new Map();
+  getAllCalendarEvents().forEach(event => {
+    const key = (event.filterKey || event.eventName || '').trim().toUpperCase();
+    if(!key){
+      return;
+    }
+    const label = event.filterLabel || event.displayLabel || event.title || key;
+    if(!options.has(key)){
+      options.set(key, label);
+    }
+  });
+  const optionMarkup = [...options.entries()].map(([value, label])=> `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('');
+  calendarEventFilter.innerHTML = `<option value="">All shows</option>${optionMarkup}`;
+  const nextValue = options.has(current) ? current : '';
+  calendarEventFilter.value = nextValue;
+  state.calendarFilter = nextValue;
+}
+
 function renderCalendarDayDetails(dayKey, dayMap = buildCalendarDayMap()){
   if(!calendarDayDetails){
     return;
@@ -2944,13 +3084,19 @@ function renderCalendarDayDetails(dayKey, dayMap = buildCalendarDayMap()){
   const key = dayKey || formatDayKey(new Date());
   const date = parseDayKey(key);
   const events = dayMap.get(key) || [];
+  const allEvents = getCalendarDayEvents(key, {applyFilter: false});
   const targetCell = calendarGrid ? calendarGrid.querySelector(`[data-day-key="${key}"]`) : null;
   calendarDayDetails.classList.toggle('is-visible', Boolean(targetCell));
   if(calendarDayTitle){
     calendarDayTitle.textContent = date ? date.toLocaleDateString(undefined, {weekday: 'long', month: 'long', day: 'numeric'}) : 'Selected day';
   }
   if(calendarDaySubtitle){
-    calendarDaySubtitle.textContent = events.length ? `${events.length} event${events.length === 1 ? '' : 's'}` : 'No events scheduled';
+    const filteredCount = events.length;
+    const totalCount = allEvents.length;
+    const base = filteredCount ? `${filteredCount} event${filteredCount === 1 ? '' : 's'}` : 'No events scheduled';
+    calendarDaySubtitle.textContent = state.calendarFilter && totalCount !== filteredCount
+      ? `${base} (${totalCount} total before filter)`
+      : base;
   }
   if(calendarEventList){
     if(!events.length){
@@ -2958,12 +3104,16 @@ function renderCalendarDayDetails(dayKey, dayMap = buildCalendarDayMap()){
     }else{
       calendarEventList.innerHTML = events.map(event => {
         const timeLabel = event.allDay ? 'All day' : formatTimeRange(event.startDate, event.endDate);
+        const numberLabel = Number.isFinite(event.showNumber) ? `Show #${event.showNumber}` : '';
         const location = event.location ? `<span class="calendar-meta">${escapeHtml(event.location)}</span>` : '';
         const description = event.description ? `<p class="help">${escapeHtml(event.description)}</p>` : '';
+        const colorDot = event.color ? `<span class="calendar-color" style="--event-color:${event.color}"></span>` : '';
+        const tag = event.eventName ? `<span class="calendar-tag">${escapeHtml(event.eventName)}</span>` : '';
+        const metaLine = [timeLabel, numberLabel].filter(Boolean).map(escapeHtml).join(' • ');
         return `
           <article class="calendar-event">
-            <h4>${escapeHtml(event.title || 'Event')}</h4>
-            <div class="calendar-meta">${escapeHtml(timeLabel || '')}</div>
+            <div class="calendar-event__title">${colorDot}<h4>${escapeHtml(event.displayLabel || event.title || 'Event')}</h4>${tag}</div>
+            ${metaLine ? `<div class="calendar-meta">${metaLine}</div>` : ''}
             ${location}
             ${description}
           </article>
@@ -2972,7 +3122,65 @@ function renderCalendarDayDetails(dayKey, dayMap = buildCalendarDayMap()){
     }
   }
   state.activeCalendarDayKey = key;
+  renderMenuDayEvents(key, events);
   positionCalendarDayDetails(key, targetCell);
+}
+
+function renderMenuDayEvents(dayKey = state.activeCalendarDayKey, filteredEvents){
+  if(!menuDayEvents){
+    return;
+  }
+  const key = dayKey || formatDayKey(new Date());
+  if(!state.calendarLoaded){
+    menuDayEvents.innerHTML = '';
+    if(menuDayEmpty){
+      menuDayEmpty.hidden = false;
+      menuDayEmpty.textContent = 'Sync the calendar to view show details.';
+    }
+    if(menuDayHint){
+      menuDayHint.textContent = 'Calendar events will appear here after syncing.';
+    }
+    return;
+  }
+  const events = Array.isArray(filteredEvents) ? filteredEvents : getCalendarDayEvents(key, {applyFilter: true});
+  const allEvents = getCalendarDayEvents(key, {applyFilter: false});
+  const date = parseDayKey(key);
+  if(menuDayLabel){
+    menuDayLabel.textContent = date ? date.toLocaleDateString(undefined, {weekday: 'long', month: 'long', day: 'numeric'}) : (key || 'selected day');
+  }
+  if(menuDayHint){
+    menuDayHint.textContent = state.calendarFilter && events.length !== allEvents.length
+      ? 'Filtered list based on calendar show filter.'
+      : 'Calendar events for the selected day.';
+  }
+  if(!events.length){
+    menuDayEvents.innerHTML = '';
+    if(menuDayEmpty){
+      menuDayEmpty.hidden = false;
+      menuDayEmpty.textContent = 'No shows synced for this day.';
+    }
+    return;
+  }
+  if(menuDayEmpty){
+    menuDayEmpty.hidden = true;
+  }
+  const orderedEvents = [...events].sort((a, b)=> (a.startTs || 0) - (b.startTs || 0));
+  menuDayEvents.innerHTML = orderedEvents.map(event => {
+    const colorDot = `<span class="menu-day-color" style="--event-color:${event.color || 'var(--border)'}"></span>`;
+    const timeLabel = event.allDay ? 'All day' : formatTimeLabel(event.startDate || event.start);
+    const numberLabel = Number.isFinite(event.showNumber) ? `Show #${event.showNumber}` : '';
+    const meta = [timeLabel, numberLabel].filter(Boolean).map(escapeHtml).join(' • ');
+    const title = escapeHtml(event.displayLabel || event.title || 'Event');
+    return `
+      <li class="menu-day-list__item">
+        ${colorDot}
+        <div class="menu-day-text">
+          <strong>${title}</strong>
+          ${meta ? `<div class="calendar-meta">${meta}</div>` : ''}
+        </div>
+      </li>
+    `;
+  }).join('');
 }
 
 function positionCalendarDayDetails(dayKey, targetCell){
@@ -3023,6 +3231,15 @@ function formatTimeLabel(date){
     return '';
   }
   return date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+}
+
+function formatTimeInputValue(date){
+  if(!(date instanceof Date) || Number.isNaN(date.getTime())){
+    return '';
+  }
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
 }
 
 function formatTimeRange(startDate, endDate){
@@ -3950,6 +4167,8 @@ function upsertShow(show){
     state.shows.unshift(normalized);
   }
   sortShows();
+  populateShowEventSelect();
+  renderMenuDayEvents(state.activeCalendarDayKey);
 }
 
 function sortShows(){
@@ -4033,10 +4252,15 @@ function onPlanLaunchChange(){
 }
 
 function collectShowHeaderValues(){
+  const draft = getNewShowDraft();
+  const draftedNumber = toNumber(draft.showNumber);
   return {
     date: showDate?.value || '',
     time: showTime?.value || '',
     label: showLabel?.value.trim() || '',
+    showNumber: Number.isFinite(draftedNumber) ? draftedNumber : null,
+    calendarEventId: draft.calendarEventId || '',
+    eventName: draft.eventName || '',
     leadPilot: leadPilotSelect?.value?.trim() || '',
     monkeyLead: monkeyLeadSelect?.value?.trim() || '',
     notes: showNotes?.value.trim() || '',
@@ -4053,10 +4277,14 @@ function getNewShowDraft(){
 
 function renderShowHeaderDraft(){
   const draft = getNewShowDraft();
+  state.activeCalendarDayKey = draft.date || state.activeCalendarDayKey || formatDayKey(new Date());
   if(showDate){ showDate.value = draft.date || ''; }
   if(showTime){ showTime.value = draft.time || ''; }
   if(showLabel){ showLabel.value = draft.label || ''; }
+  if(showEventSelect){ showEventSelect.value = draft.calendarEventId || ''; }
+  if(showNumberInput){ showNumberInput.value = Number.isFinite(draft.showNumber) ? draft.showNumber : ''; }
   if(showNotes){ showNotes.value = draft.notes || ''; }
+  populateShowEventSelect();
   renderPilotAssignments(draft);
   ensureShowHeaderValid();
 }
@@ -4064,6 +4292,12 @@ function renderShowHeaderDraft(){
 function resetShowHeaderDraft(){
   state.newShowDraft = createEmptyShowDraft();
   state.showHeaderShowErrors = false;
+  if(showEventSelect){
+    showEventSelect.value = '';
+  }
+  if(showNumberInput){
+    showNumberInput.value = '';
+  }
   renderShowHeaderDraft();
 }
 
@@ -4101,6 +4335,17 @@ function ensureShowHeaderValid(values, options = {}){
       firstInvalid = field;
     }
   });
+  const availableEvents = showDate?.value ? getCalendarDayEvents(showDate.value, {applyFilter: false}) : [];
+  const requireCalendarSelection = Boolean(showEventSelect && availableEvents.length);
+  if(requireCalendarSelection){
+    const hasSelection = Boolean(getNewShowDraft().calendarEventId || (showEventSelect && showEventSelect.value));
+    setFieldValidity(showEventSelect, hasSelection, shouldShowErrors);
+    if(!hasSelection && !firstInvalid){
+      firstInvalid = {key: 'calendarEventId', label: 'Calendar show', element: showEventSelect};
+    }
+  }else if(showEventSelect){
+    setFieldValidity(showEventSelect, true, false);
+  }
   const isValid = !firstInvalid;
   if(newShowBtn){
     if(state.isCreatingShow){
@@ -4137,7 +4382,7 @@ function setFieldValidity(element, isValid, showError){
 }
 
 function setShowHeaderDisabled(disabled){
-  const controls = [showDate, showTime, showLabel, showNotes, leadPilotSelect, monkeyLeadSelect];
+  const controls = [showDate, showTime, showLabel, showNotes, leadPilotSelect, monkeyLeadSelect, showEventSelect, showNumberInput];
   controls.forEach(control =>{
     if(!control){
       return;
@@ -4157,6 +4402,128 @@ function setShowHeaderDisabled(disabled){
   if(!disabled){
     renderShowHeaderDraft();
   }
+}
+
+function getUsedCalendarEventIds(dateKey){
+  const key = dateKey || '';
+  return new Set(state.shows
+    .filter(show => show.date === key && show.calendarEventId)
+    .map(show => show.calendarEventId));
+}
+
+function isEventAlreadyUsed(event, dateKey){
+  const key = dateKey || event?.dayKey || '';
+  if(!event){
+    return false;
+  }
+  const eventNumber = toNumber(event.showNumber);
+  const eventLabel = (event.displayLabel || event.title || '').toLowerCase();
+  return state.shows.some(show => {
+    if(show.date !== key){
+      return false;
+    }
+    if(show.calendarEventId && event.id){
+      return show.calendarEventId === event.id;
+    }
+    const showNumber = toNumber(show.showNumber);
+    if(Number.isFinite(showNumber) && Number.isFinite(eventNumber) && showNumber === eventNumber){
+      return true;
+    }
+    const showLabel = (show.label || '').toLowerCase();
+    return showLabel && eventLabel && showLabel === eventLabel;
+  });
+}
+
+function populateShowEventSelect(){
+  if(!showEventSelect){
+    return;
+  }
+  const draft = getNewShowDraft();
+  const selectedDate = showDate?.value || draft.date || state.activeCalendarDayKey || formatDayKey(new Date());
+  const events = selectedDate ? getCalendarDayEvents(selectedDate, {applyFilter: false}) : [];
+  const usedIds = getUsedCalendarEventIds(selectedDate);
+  const previousSelection = draft.calendarEventId || showEventSelect.value || '';
+  const options = ['<option value="">Select a show for this date</option>'];
+  const orderedEvents = [...events].sort((a, b)=> (a.startTs || 0) - (b.startTs || 0));
+  orderedEvents.forEach(event => {
+    const disabled = usedIds.has(event.id) || isEventAlreadyUsed(event, selectedDate);
+    const timeLabel = event.allDay ? 'All day' : formatTimeLabel(event.startDate || event.start);
+    const numberLabel = Number.isFinite(event.showNumber) ? `Show #${event.showNumber}` : '';
+    const labelParts = [event.displayLabel || event.title || 'Event', timeLabel, numberLabel].filter(Boolean).map(escapeHtml);
+    options.push(`<option value="${escapeHtml(event.id || '')}"${disabled ? ' disabled' : ''}>${labelParts.join(' • ')}${disabled ? ' (used)' : ''}</option>`);
+  });
+  showEventSelect.innerHTML = options.join('');
+  const hasSelection = orderedEvents.some(evt => evt.id === previousSelection && !usedIds.has(previousSelection) && !isEventAlreadyUsed(evt, selectedDate));
+  if(hasSelection){
+    showEventSelect.value = previousSelection;
+  }else{
+    showEventSelect.value = '';
+    updateNewShowDraft('calendarEventId', '');
+    updateNewShowDraft('eventName', '');
+    updateNewShowDraft('showNumber', null);
+    if(showNumberInput){
+      showNumberInput.value = '';
+    }
+  }
+  ensureShowHeaderValid();
+}
+
+function applyCalendarEventToShowForm(event){
+  if(!event){
+    return;
+  }
+  const dayKey = event.dayKey || formatDayKey(event.startDate || event.start);
+  if(showDate && dayKey){
+    showDate.value = dayKey;
+    handleShowHeaderChange('date', showDate.value);
+  }
+  if(showTime){
+    if(!event.allDay){
+      const timeValue = formatTimeInputValue(event.startDate || event.start);
+      showTime.value = timeValue;
+      handleShowHeaderChange('time', timeValue);
+    }else{
+      showTime.value = '';
+      handleShowHeaderChange('time', '');
+    }
+  }
+  const label = event.displayLabel || event.title || '';
+  if(showLabel){
+    showLabel.value = label;
+    handleShowHeaderChange('label', label);
+  }
+  if(showEventSelect){
+    showEventSelect.value = event.id || '';
+  }
+  const showNumber = Number.isFinite(event.showNumber) ? event.showNumber : null;
+  if(showNumberInput){
+    showNumberInput.value = showNumber === null ? '' : String(showNumber);
+  }
+  updateNewShowDraft('calendarEventId', event.id || '');
+  updateNewShowDraft('eventName', event.eventName || '');
+  updateNewShowDraft('showNumber', showNumber);
+  state.activeCalendarDayKey = dayKey || state.activeCalendarDayKey;
+  renderMenuDayEvents(state.activeCalendarDayKey);
+  if(state.calendarLoaded){
+    renderCalendar();
+  }
+  ensureShowHeaderValid();
+}
+
+function onShowEventChange(){
+  const selectedId = showEventSelect?.value || '';
+  if(!selectedId){
+    updateNewShowDraft('calendarEventId', '');
+    updateNewShowDraft('eventName', '');
+    updateNewShowDraft('showNumber', null);
+    if(showNumberInput){
+      showNumberInput.value = '';
+    }
+    ensureShowHeaderValid();
+    return;
+  }
+  const event = getAllCalendarEvents().find(evt => evt.id === selectedId);
+  applyCalendarEventToShowForm(event || null);
 }
 
 function setNewShowButtonBusy(busy){
@@ -4225,10 +4592,14 @@ async function duplicateShow(showId){
   setShowHeaderDisabled(true);
   setNewShowButtonBusy(true);
   try{
+    const dupShowNumber = toNumber(source.showNumber);
     const dupPayload = {
       date: source.date,
       time: source.time,
       label: source.label,
+      calendarEventId: source.calendarEventId || '',
+      eventName: source.eventName || '',
+      showNumber: Number.isFinite(dupShowNumber) ? dupShowNumber : null,
       crew: [...(source.crew||[])],
       leadPilot: source.leadPilot || '',
       monkeyLead: source.monkeyLead || '',
@@ -5030,6 +5401,9 @@ function setView(view){
   }else{
     updateOperatorSummary();
   }
+  if(normalizedView === 'lead' && !state.calendarLoaded){
+    loadCalendarEvents().catch(()=>{});
+  }
   if(normalizedView === 'archive'){
     renderArchiveSelect();
   }
@@ -5070,6 +5444,7 @@ function toggleConfig(force){
     if(isAdmin()){
       loadUsers();
     }
+    ensureCalendarEventsLoaded().then(()=> renderMenuDayEvents()).catch(()=>{});
   }else{
     setConfigSection(nextSection);
   }
@@ -5709,11 +6084,15 @@ function normalizeArchivedShow(raw = {}){
   const entries = Array.isArray(raw.entries)
     ? raw.entries.map(normalizeArchivedEntry).sort((a, b)=> (b.ts || 0) - (a.ts || 0))
     : [];
+  const showNumber = toNumber(raw.showNumber);
   const show = {
     id: raw.id,
     date: typeof raw.date === 'string' ? raw.date : '',
     time: typeof raw.time === 'string' ? raw.time : '',
     label: typeof raw.label === 'string' ? raw.label : '',
+    showNumber: Number.isFinite(showNumber) ? showNumber : null,
+    calendarEventId: typeof raw.calendarEventId === 'string' ? raw.calendarEventId.trim() : '',
+    eventName: typeof raw.eventName === 'string' ? raw.eventName.trim().toUpperCase() : '',
     leadPilot: typeof raw.leadPilot === 'string' ? raw.leadPilot : '',
     monkeyLead: typeof raw.monkeyLead === 'string' ? raw.monkeyLead : '',
     notes: typeof raw.notes === 'string' ? raw.notes : '',
@@ -5732,11 +6111,15 @@ function normalizeActiveShow(raw = {}){
   const entries = Array.isArray(raw.entries)
     ? raw.entries.map(normalizeArchivedEntry)
     : [];
+  const showNumber = toNumber(raw.showNumber);
   return {
     id: raw.id,
     date: typeof raw.date === 'string' ? raw.date : '',
     time: typeof raw.time === 'string' ? raw.time : '',
     label: typeof raw.label === 'string' ? raw.label : '',
+    showNumber: Number.isFinite(showNumber) ? showNumber : null,
+    calendarEventId: typeof raw.calendarEventId === 'string' ? raw.calendarEventId.trim() : '',
+    eventName: typeof raw.eventName === 'string' ? raw.eventName.trim().toUpperCase() : '',
     leadPilot: typeof raw.leadPilot === 'string' ? raw.leadPilot : '',
     monkeyLead: typeof raw.monkeyLead === 'string' ? raw.monkeyLead : '',
     notes: typeof raw.notes === 'string' ? raw.notes : '',
@@ -5755,9 +6138,22 @@ function normalizeCalendarEvent(raw = {}){
   const endTs = Number.isFinite(raw.endTs) ? raw.endTs : end?.getTime();
   const startDate = startTs ? new Date(startTs) : start || null;
   const endDate = endTs ? new Date(endTs) : end || null;
+  const baseTitle = typeof raw.title === 'string' ? raw.title : 'Event';
+  const meta = deriveCalendarMetadata(baseTitle, raw.eventName);
+  const parsedNumber = toNumber(raw.showNumber);
+  const showNumber = Number.isFinite(parsedNumber) ? parsedNumber : meta.showNumber;
+  const eventName = typeof raw.eventName === 'string' && raw.eventName.trim() ? raw.eventName.trim().toUpperCase() : meta.eventName;
+  const filterKey = (raw.filterKey || meta.filterKey || '').toUpperCase();
+  const filterLabel = raw.filterLabel || meta.filterLabel || baseTitle;
+  const color = (typeof raw.color === 'string' && raw.color.trim())
+    ? raw.color
+    : meta.color || '';
+  const displayLabel = Number.isFinite(showNumber)
+    ? buildCalendarDisplayLabel(eventName, showNumber, meta.filterLabel || baseTitle)
+    : (meta.filterLabel || buildCalendarDisplayLabel(eventName, showNumber, baseTitle));
   return {
     id: raw.id,
-    title: typeof raw.title === 'string' ? raw.title : 'Event',
+    title: baseTitle,
     description: typeof raw.description === 'string' ? raw.description : '',
     location: typeof raw.location === 'string' ? raw.location : '',
     start: startDate ? startDate.toISOString() : '',
@@ -5767,7 +6163,13 @@ function normalizeCalendarEvent(raw = {}){
     startDate,
     endDate,
     dayKey: startDate ? formatDayKey(startDate) : '',
-    allDay: Boolean(raw.allDay)
+    allDay: Boolean(raw.allDay),
+    eventName,
+    showNumber: Number.isFinite(showNumber) ? showNumber : null,
+    color,
+    filterKey,
+    filterLabel,
+    displayLabel
   };
 }
 
@@ -5797,6 +6199,9 @@ function normalizeArchivedEntry(raw = {}){
 }
 
 function toNumber(value){
+  if(value === null || value === undefined || value === ''){
+    return null;
+  }
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
 }

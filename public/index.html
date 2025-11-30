@@ -56,6 +56,14 @@
           <strong id="menuDateTime"></strong>
         </div>
       </div>
+      <div class="menu-day-events">
+        <div class="menu-day-events__header">
+          <strong>Shows for <span id="menuDayLabel">today</span></strong>
+          <p id="menuDayHint" class="help">Calendar events for the selected day.</p>
+        </div>
+        <ul id="menuDayEvents" class="menu-day-list"></ul>
+        <p id="menuDayEmpty" class="help" hidden>No shows synced for this day.</p>
+      </div>
       <p class="help">Use the menu controls to confirm your session and jump into the admin workspace when authorized.</p>
       <div class="config-actions row">
         <div class="grow"></div>
@@ -306,6 +314,15 @@
         <div class="calendar-legend">
           <span class="legend-dot today">Today</span>
           <span class="legend-dot all-day">All day</span>
+          <span class="legend-dot woz">WOZ</span>
+          <span class="legend-dot eagles">EAGLES</span>
+          <span class="legend-dot zac">Zac Brown Band: Love and Fear</span>
+        </div>
+        <div class="calendar-filters">
+          <label class="sr-only" for="calendarEventFilter">Filter shows</label>
+          <select id="calendarEventFilter">
+            <option value="">All shows</option>
+          </select>
         </div>
       </div>
       <div id="calendarLayout" class="calendar-layout">
@@ -339,8 +356,19 @@
           <input id="showTime" type="time" required />
         </div>
         <div class="col-6">
+          <label for="showEventSelect">Show from calendar</label>
+          <select id="showEventSelect">
+            <option value="">Select a show for this date</option>
+          </select>
+          <p class="help">Options come from the calendar feed for the chosen date.</p>
+        </div>
+        <div class="col-6">
           <label for="showLabel">Show label or number</label>
           <input id="showLabel" type="text" placeholder="e.g., 7pm Main" required />
+        </div>
+        <div class="col-3">
+          <label for="showNumber">Show #</label>
+          <input id="showNumber" type="text" inputmode="numeric" placeholder="Auto-filled" readonly />
         </div>
         <div class="col-6">
           <label for="leadPilot">Lead</label>

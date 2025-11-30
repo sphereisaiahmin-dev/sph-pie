@@ -106,6 +106,7 @@ class SqlProvider {
       entries: Array.isArray(payload.entries) ? payload.entries : []
     });
     await this._enforceShowLimit(show.date, show.id);
+    this._assertCalendarEventAvailable(show);
     await this._persist(show);
     await this._refreshArchive();
     return show;
@@ -123,6 +124,7 @@ class SqlProvider {
       updatedAt: Date.now()
     });
     await this._enforceShowLimit(updated.date, updated.id);
+    this._assertCalendarEventAvailable(updated);
     await this._persist(updated);
     await this._refreshArchive();
     return updated;
@@ -219,6 +221,7 @@ class SqlProvider {
 
   async replaceShow(show){
     const normalized = this._normalizeShow(show);
+    this._assertCalendarEventAvailable(normalized);
     await this._persist(normalized);
     await this._refreshArchive();
     return normalized;
@@ -331,14 +334,44 @@ class SqlProvider {
     });
   }
 
+  _assertCalendarEventAvailable(show){
+    if(!show || !show.calendarEventId){
+      return;
+    }
+    const rows = this._select('SELECT data FROM shows');
+    const conflict = rows.some(row => {
+      try{
+        const data = JSON.parse(row.data);
+        return data
+          && data.calendarEventId
+          && data.calendarEventId === show.calendarEventId
+          && data.id !== show.id
+          && (!data.date || data.date === show.date);
+      }catch(err){
+        return false;
+      }
+    });
+    if(conflict){
+      const err = new Error('A show already exists for that calendar event');
+      err.status = 400;
+      throw err;
+    }
+  }
+
   _normalizeShow(raw){
     const createdAt = typeof raw.createdAt === 'number' ? raw.createdAt : Number(raw.createdAt);
     const updatedAt = typeof raw.updatedAt === 'number' ? raw.updatedAt : Number(raw.updatedAt);
+    const rawShowNumber = raw.showNumber;
+    const parsedShowNumber = Number(rawShowNumber);
+    const showNumber = rawShowNumber === null || rawShowNumber === undefined || rawShowNumber === '' ? null : parsedShowNumber;
     return {
       id: raw.id,
       date: typeof raw.date === 'string' ? raw.date.trim() : '',
       time: typeof raw.time === 'string' ? raw.time.trim() : '',
       label: typeof raw.label === 'string' ? raw.label.trim() : '',
+      showNumber: Number.isFinite(showNumber) ? showNumber : null,
+      calendarEventId: typeof raw.calendarEventId === 'string' ? raw.calendarEventId.trim() : '',
+      eventName: typeof raw.eventName === 'string' ? raw.eventName.trim().toUpperCase() : '',
       crew: Array.isArray(raw.crew) ? this._normalizeNameList(raw.crew, {sort: true}) : [],
       leadPilot: typeof raw.leadPilot === 'string' ? raw.leadPilot.trim() : '',
       monkeyLead: typeof raw.monkeyLead === 'string' ? raw.monkeyLead.trim() : '',

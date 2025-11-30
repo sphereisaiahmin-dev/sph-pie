@@ -1,5 +1,27 @@
 const ical = require('node-ical');
 
+const COLOR_MAP = {
+  woz: '#22c55e',
+  eagles: '#3b82f6'
+};
+
+const SPECIAL_TITLE_COLORS = [
+  {match: 'zac brown band: love and fear', color: '#ef4444'}
+];
+
+function parseCalendarMetadata(summary = ''){
+  const firstWordMatch = summary.match(/^([A-Za-z]+)/);
+  const eventName = firstWordMatch ? firstWordMatch[1].toUpperCase() : '';
+  const numberMatch = summary.match(/#\s*(\d+)/);
+  const showNumber = numberMatch ? Number(numberMatch[1]) : null;
+  const normalizedTitle = summary.toLowerCase();
+  const specialColor = SPECIAL_TITLE_COLORS.find(entry => normalizedTitle.includes(entry.match))?.color;
+  const color = specialColor
+    || COLOR_MAP[eventName.toLowerCase()]
+    || '';
+  return {eventName, showNumber, color};
+}
+
 function getCalendarCutoffTimestamp(monthsBack = 2){
   const now = new Date();
   now.setHours(0, 0, 0, 0);
@@ -32,6 +54,7 @@ async function fetchCalendarFeed(feedUrl){
       ? entry.uid
       : (typeof entry.id === 'string' && entry.id ? entry.id : `${entry.summary || 'event'}-${start.getTime()}`);
     const allDay = entry.datetype === 'date' || (start.getUTCHours?.() === 0 && start.getUTCMinutes?.() === 0 && (!end || end.getUTCHours?.() === 0));
+    const meta = parseCalendarMetadata(typeof entry.summary === 'string' ? entry.summary : '');
     events.push({
       id,
       title: typeof entry.summary === 'string' ? entry.summary : 'Untitled event',
@@ -41,7 +64,10 @@ async function fetchCalendarFeed(feedUrl){
       end: end instanceof Date ? end.toISOString() : '',
       startTs: start.getTime(),
       endTs: end instanceof Date ? end.getTime() : null,
-      allDay
+      allDay,
+      eventName: meta.eventName,
+      showNumber: meta.showNumber,
+      color: meta.color
     });
   });
   return events;

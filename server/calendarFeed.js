@@ -2,21 +2,29 @@ const ical = require('node-ical');
 
 const COLOR_MAP = {
   woz: '#22c55e',
-  eagles: '#3b82f6'
+  eagles: '#3b82f6',
+  zac: '#ef4444',
+  bsb: '#a855f7',
+  illenium: '#f59e0b'
 };
 
 const SPECIAL_TITLE_COLORS = [
-  {match: 'zac brown band: love and fear', color: '#ef4444'}
+  {match: 'zac brown band: love and fear', color: '#ef4444', label: 'ZAC'}
 ];
 
 function parseCalendarMetadata(summary = ''){
-  const firstWordMatch = summary.match(/^([A-Za-z]+)/);
-  const eventName = firstWordMatch ? firstWordMatch[1].toUpperCase() : '';
-  const numberMatch = summary.match(/#\s*(\d+)/);
-  const showNumber = numberMatch ? Number(numberMatch[1]) : null;
   const normalizedTitle = summary.toLowerCase();
-  const specialColor = SPECIAL_TITLE_COLORS.find(entry => normalizedTitle.includes(entry.match))?.color;
-  const color = specialColor
+  const special = SPECIAL_TITLE_COLORS.find(entry => normalizedTitle.includes(entry.match));
+  const firstWordMatch = summary.match(/^([A-Za-z]+)/);
+  const eventName = (special?.label)
+    ? special.label
+    : (firstWordMatch ? firstWordMatch[1].toUpperCase() : '');
+  const numberMatch = summary.match(/#\s*(\d+)/);
+  const fallbackNumberMatch = !numberMatch ? summary.match(/\b(\d+)\b/) : null;
+  const showNumber = numberMatch
+    ? Number(numberMatch[1])
+    : (fallbackNumberMatch ? Number(fallbackNumberMatch[1]) : null);
+  const color = (special?.color)
     || COLOR_MAP[eventName.toLowerCase()]
     || '';
   return {eventName, showNumber, color};
